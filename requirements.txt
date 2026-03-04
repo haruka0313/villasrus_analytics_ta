@@ -11,3 +11,4 @@ statsmodels
 joblib
 huggingface_hub
 gdown
+mysql-connector-python
