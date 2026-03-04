@@ -15,7 +15,6 @@ except ImportError:
 
 
 # ─── CONNECTION CONFIG ──────────────────────────────────────────────────────────
-# ─── CONNECTION CONFIG ──────────────────────────────────────────────────────────
 def get_db_config():
     try:
         # Streamlit Cloud — baca dari st.secrets
@@ -42,7 +41,12 @@ def get_db_config():
             "use_unicode": True,
         }
 
-DB_CONFIG = get_db_config()
+try:
+    DB_CONFIG = get_db_config()
+except Exception as e:
+    import traceback
+    DB_CONFIG = {}
+    print("DB_CONFIG error:", traceback.format_exc())
 
 
 def test_connection() -> dict:
@@ -135,7 +139,6 @@ def run_many(sql: str, data: list):
     if not conn:
         return False
     try:
-        # Convert setiap row dari numpy types ke Python native
         clean_data = [_clean_params(row) for row in data]
         cursor = conn.cursor()
         cursor.executemany(sql, clean_data)
@@ -230,7 +233,6 @@ DDL_STATEMENTS = [
         avg_daily_revenue   DECIMAL(15,2) DEFAULT 0,
         revpar              DECIMAL(15,2) DEFAULT 0,
         revenue_per_guest   DECIMAL(15,2) DEFAULT 0,
-        -- ── Flag kolom (tidak ada data yang dihapus) ──────────────────────────
         is_empty_villa      TINYINT(1)    DEFAULT 0  COMMENT 'Vila kosong murni: guests=0',
         is_adr_missing      TINYINT(1)    DEFAULT 0  COMMENT 'Vila terisi tapi ADR=0',
         is_outlier_adr      TINYINT(1)    DEFAULT 0  COMMENT 'ADR melampaui batas IQR×3.5 (flag only)',
@@ -240,14 +242,34 @@ DDL_STATEMENTS = [
         FOREIGN KEY (villa_code) REFERENCES villas(villa_code) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
+    # ── TABEL BARU: sarima_models ─────────────────────────────────────────────
+    """
+    CREATE TABLE IF NOT EXISTS sarima_models (
+        id          INT AUTO_INCREMENT PRIMARY KEY,
+        villa_name  VARCHAR(100) UNIQUE NOT NULL,
+        model_blob  LONGBLOB     NOT NULL,
+        meta_blob   LONGBLOB     NOT NULL,
+        mape        FLOAT,
+        rmse        FLOAT,
+        aic         FLOAT,
+        trained_at  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_villa_name (villa_name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """,
 ]
 
-# ─── MIGRATION: tambah kolom flag ke tabel yang sudah ada ───────────────────────
+# ─── MIGRATION: tambah kolom yang mungkin belum ada di tabel lama ──────────────
 DDL_MIGRATIONS = [
+    # financial_data flag columns
     "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS is_empty_villa  TINYINT(1) DEFAULT 0 COMMENT 'Vila kosong murni: guests=0'",
     "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS is_adr_missing  TINYINT(1) DEFAULT 0 COMMENT 'Vila terisi tapi ADR=0'",
     "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS is_outlier_adr  TINYINT(1) DEFAULT 0 COMMENT 'ADR melampaui batas IQR×3.5 (flag only)'",
     "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS for_modeling     TINYINT(1) DEFAULT 0 COMMENT 'Subset bersih: guests>0 AND ADR>0'",
+    # sarima_models — jaga-jaga jika tabel sudah ada tapi kolom kurang
+    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS mape       FLOAT",
+    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS rmse       FLOAT",
+    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS aic        FLOAT",
+    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS trained_at DATETIME DEFAULT CURRENT_TIMESTAMP",
 ]
 
 SEED_VILLAS = """
@@ -274,7 +296,6 @@ def hash_password(pw: str) -> str:
 def _to_python(val):
     """
     Convert numpy/pandas types → Python native types agar kompatibel dengan MySQL connector.
-    numpy.int64, numpy.float64, numpy.bool_ tidak bisa langsung dikirim ke MySQL.
     """
     import numpy as np
     if isinstance(val, (np.integer,)):
@@ -297,8 +318,9 @@ def _clean_params(params):
 
 def init_db() -> dict:
     """
-    Buat semua tabel + seed data awal + jalankan migration kolom flag.
+    Buat semua tabel + seed data awal + jalankan migration kolom.
     Dipanggil otomatis saat pertama kali app dijalankan.
+    Termasuk tabel sarima_models untuk menyimpan model SARIMA.
     """
     conn = get_conn()
     if not conn:
@@ -307,6 +329,8 @@ def init_db() -> dict:
     tables_created = []
     try:
         cursor = conn.cursor()
+
+        # Buat semua tabel
         for ddl in DDL_STATEMENTS:
             cursor.execute(ddl)
             words = ddl.split()
@@ -315,20 +339,24 @@ def init_db() -> dict:
                     tables_created.append(words[i + 1].strip())
                     break
 
-        # Jalankan migration (ADD COLUMN IF NOT EXISTS) untuk tabel yang sudah ada
+        # Jalankan migration (ADD COLUMN IF NOT EXISTS)
         for migration in DDL_MIGRATIONS:
             try:
                 cursor.execute(migration)
             except Exception:
                 pass  # Kolom sudah ada, abaikan error
 
+        # Seed data
         cursor.execute(SEED_VILLAS)
         cursor.execute(SEED_ADMIN, (hash_password("admin123"),))
         conn.commit()
         cursor.close()
         conn.close()
-        return {"ok": True, "message": "Database berhasil diinisialisasi.",
-                "tables_created": tables_created}
+        return {
+            "ok": True,
+            "message": "Database berhasil diinisialisasi (termasuk tabel sarima_models).",
+            "tables_created": tables_created,
+        }
     except mysql.connector.Error as e:
         return {"ok": False, "message": f"Init DB error: {e}",
                 "tables_created": tables_created}
@@ -389,7 +417,7 @@ def get_villas():
     return run_query("SELECT * FROM villas WHERE is_active=1 ORDER BY area,villa_name")
 
 
-# ─── DATA ───────────────────────────────────────────────────────────────────────
+# ─── OCCUPANCY DATA ─────────────────────────────────────────────────────────────
 def get_occupancy_data(villa_codes=None, date_from=None, date_to=None):
     sql = """
         SELECT o.*, v.villa_name, v.area, v.color_hex
@@ -407,6 +435,7 @@ def get_occupancy_data(villa_codes=None, date_from=None, date_to=None):
     return run_query(sql + " ORDER BY o.date", params)
 
 
+# ─── FINANCIAL DATA ─────────────────────────────────────────────────────────────
 def get_financial_data(villa_codes=None, date_from=None, date_to=None):
     sql = """
         SELECT f.*, v.villa_name, v.area, v.color_hex
@@ -446,6 +475,32 @@ def get_financial_data_for_modeling(villa_codes=None, date_from=None, date_to=No
     return run_query(sql + " ORDER BY f.date", params)
 
 
+# ─── SARIMA MODELS ──────────────────────────────────────────────────────────────
+def get_sarima_model(villa_name: str):
+    """Ambil satu baris sarima_models berdasarkan villa_name."""
+    return run_query(
+        "SELECT * FROM sarima_models WHERE villa_name=%s",
+        (villa_name,)
+    )
+
+
+def get_all_sarima_models():
+    """Ambil semua model SARIMA yang sudah ditraining."""
+    return run_query(
+        "SELECT villa_name, mape, rmse, aic, trained_at "
+        "FROM sarima_models ORDER BY villa_name"
+    )
+
+
+def delete_sarima_model(villa_name: str):
+    """Hapus model SARIMA dari database (untuk force retrain)."""
+    return run_query(
+        "DELETE FROM sarima_models WHERE villa_name=%s",
+        (villa_name,), fetch=False
+    )
+
+
+# ─── INSERT BULK ────────────────────────────────────────────────────────────────
 def insert_occupancy_bulk(records: list):
     sql = """
         INSERT INTO occupancy_data
@@ -485,6 +540,7 @@ def insert_financial_bulk(records: list):
     return run_many(sql, records)
 
 
+# ─── UPLOAD LOGS ────────────────────────────────────────────────────────────────
 def log_upload(filename, file_type, villa_code, rows_total,
                rows_imported, rows_skipped, status, user_id, notes=""):
     return run_query(
@@ -507,6 +563,7 @@ def get_upload_logs():
     """)
 
 
+# ─── DATA SUMMARY ───────────────────────────────────────────────────────────────
 def get_data_summary():
     return run_query("""
         SELECT v.villa_name, v.area,
