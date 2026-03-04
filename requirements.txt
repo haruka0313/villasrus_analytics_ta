@@ -4,11 +4,7 @@ numpy
 plotly
 python-dotenv
 streamlit-cookies-manager
-SQLAlchemy
-PyMySQL
+mysql-connector-python
 scikit-learn
 statsmodels
 joblib
-huggingface_hub
-gdown
-mysql-connector-python
