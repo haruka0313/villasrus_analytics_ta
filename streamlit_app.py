@@ -111,16 +111,15 @@ with tab_login:
     username = st.text_input("Username", placeholder="Masukkan username", key="login_user")
     password = st.text_input("Password", type="password", placeholder="Masukkan password", key="login_pass")
 
-    if st.button("🔐  Masuk ke Dashboard", key="btn_login"):
-        if not username or not password:
-            st.error("Username dan password wajib diisi.")
-    else:
+if st.button("🔐  Masuk ke Dashboard", key="btn_login"):
+    if not username or not password:
+        st.error("Username dan password wajib diisi.")
+    else:                      # ← now correctly nested inside button click
         with st.spinner("Memverifikasi..."):
             user = get_user_by_credentials(username.strip(), password)
         if user:
             set_session(user)
             save_to_cookie(user, cookies)
-            # ✅ Fix #2: rerun dulu agar cookie tersimpan, BARU switch_page
             st.rerun()
         else:
             st.error("❌ Username atau password salah, atau akun belum diaktifkan.")
