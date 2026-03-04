@@ -7,4 +7,5 @@ streamlit-cookies-manager
 mysql-connector-python
 scikit-learn
 statsmodels
+pmdarima
 joblib
