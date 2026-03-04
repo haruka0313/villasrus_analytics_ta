@@ -40,6 +40,9 @@ CONFIG = {
     "enforce_invertibility": False,
 }
 
+# ─── CACHE model_exists (hindari query TiDB berulang) ────────────────────────
+_model_exists_cache: dict = {}
+
 
 # ─── HELPER PATH ──────────────────────────────────────────────────────────────
 def _pkl_path(villa_name: str) -> str:
@@ -208,9 +211,10 @@ def fit_sarima(series: pd.Series,
         'rating'        : _rating(mape),
     }
 
+
+# ─── DB: SAVE MODEL ───────────────────────────────────────────────────────────
 def save_model_to_db(villa_name: str, model, meta_data: dict, series) -> bool:
     """Simpan model + meta ke TiDB sebagai BLOB."""
-    # Serialize ke bytes
     model_buffer = io.BytesIO()
     meta_buffer  = io.BytesIO()
     joblib.dump(model, model_buffer, compress=("zlib", 6))
@@ -252,6 +256,7 @@ def save_model_to_db(villa_name: str, model, meta_data: dict, series) -> bool:
         return False
 
 
+# ─── DB: LOAD MODEL ───────────────────────────────────────────────────────────
 def load_model_from_db(villa_name: str) -> tuple:
     """Load model + meta dari TiDB. Returns (model, meta_data) atau (None, None)."""
     conn = get_conn()
@@ -278,6 +283,7 @@ def load_model_from_db(villa_name: str) -> tuple:
         return None, None
 
 
+# ─── DB: CHECK MODEL EXISTS ───────────────────────────────────────────────────
 def model_exists_db(villa_name: str) -> bool:
     """Cek apakah model tersedia di TiDB."""
     result = run_query(
@@ -285,6 +291,19 @@ def model_exists_db(villa_name: str) -> bool:
         (villa_name,)
     )
     return result is not None and not result.empty
+
+
+# ─── CACHE INVALIDATION ───────────────────────────────────────────────────────
+def _invalidate_model_cache(villa_name: str = None):
+    """
+    Invalidate cache model_exists setelah train selesai.
+    Panggil dengan villa_name untuk invalidate satu villa,
+    atau tanpa argumen untuk invalidate semua.
+    """
+    if villa_name:
+        _model_exists_cache.pop(villa_name, None)
+    else:
+        _model_exists_cache.clear()
 
 
 # ─── TRAIN ALL ────────────────────────────────────────────────────────────────
@@ -315,7 +334,8 @@ def train_all(df_occ: pd.DataFrame,
         res = fit_sarima(series, villa_name)
 
         if res is not None:
-            joblib.dump(res["model"], pkl)
+            # ── FIX: tambahkan compress di train_all ─────────────
+            joblib.dump(res["model"], pkl, compress=("zlib", 6))
             meta_data = {k: v for k, v in res.items() if k not in ("model", "train", "test", "forecast", "series")}
             meta_data["status"]      = "trained"
             meta_data["data_end"]    = str(res["series"].index[-1].date())
@@ -323,7 +343,14 @@ def train_all(df_occ: pd.DataFrame,
             meta_data["n_test"]      = len(res["test"])
             meta_data["model_path"]  = pkl
             meta_data["_series_end"] = res["series"].index[-1]
-            joblib.dump({**meta_data, "_series": res["series"]}, meta)
+            joblib.dump({**meta_data, "_series": res["series"]}, meta, compress=3)
+
+            # Simpan ke TiDB juga
+            save_model_to_db(villa_name, res["model"], meta_data, res["series"])
+
+            # Invalidate cache setelah train
+            _invalidate_model_cache(villa_name)
+
             results[villa_name] = meta_data
         else:
             results[villa_name] = {"status": "error", "villa_name": villa_name}
@@ -339,11 +366,13 @@ def train_and_save(villa_name: str,
     meta = _meta_path(villa_name)
 
     if not force_retrain:
+        # Cek cache lokal dulu
         if os.path.exists(pkl) and os.path.exists(meta):
             cached = joblib.load(meta)
             cached["status"] = "loaded_from_cache"
             return cached
 
+        # Fallback: load dari TiDB
         model, meta_data = load_model_from_db(villa_name)
         if model is not None and meta_data is not None:
             # Cache ke lokal untuk session ini
@@ -360,27 +389,33 @@ def train_and_save(villa_name: str,
         res = fit_sarima(series, villa_name)
     except Exception as e:
         import traceback
-        return {"status": "error", "message": f"fit_sarima exception: {type(e).__name__}: {e}", "traceback": traceback.format_exc()}
+        return {
+            "status"   : "error",
+            "message"  : f"fit_sarima exception: {type(e).__name__}: {e}",
+            "traceback": traceback.format_exc(),
+        }
 
     if res is None:
         s_check = series.resample('W').mean().dropna()
         if s_check.max() > 1.5:
             s_check = s_check / 100.0
-        n           = len(s_check)
-        test_size   = CONFIG["test_size"]
-        s_period    = CONFIG["seasonal_period"]
-        n_test      = max(int(n * test_size), 4)
-        n_train     = n - n_test
-        m_used      = 4 if n_train < 2 * s_period else s_period
-        min_needed  = max(2 * m_used + 4, 12)
+        n          = len(s_check)
+        test_size  = CONFIG["test_size"]
+        s_period   = CONFIG["seasonal_period"]
+        n_test     = max(int(n * test_size), 4)
+        n_train    = n - n_test
+        m_used     = 4 if n_train < 2 * s_period else s_period
+        min_needed = max(2 * m_used + 4, 12)
         if not STATSMODELS_OK:
             msg = "statsmodels tidak terinstall"
         elif n_train < min_needed:
-            msg = f"Data terlalu pendek: {n} minggu total, n_train={n_train}, butuh minimal {min_needed} minggu (pakai m={m_used})"
+            msg = (f"Data terlalu pendek: {n} minggu total, n_train={n_train}, "
+                   f"butuh minimal {min_needed} minggu (pakai m={m_used})")
         else:
             msg = "fit_sarima gagal — cek terminal/log untuk detail error"
         return {"status": "error", "message": msg}
 
+    # Simpan ke lokal dengan compress
     joblib.dump(res["model"], pkl, compress=("zlib", 6))
     meta_data = {k: v for k, v in res.items() if k not in ("model", "train", "test", "forecast")}
     meta_data["status"]     = "trained"
@@ -390,7 +425,11 @@ def train_and_save(villa_name: str,
     meta_data["model_path"] = pkl
     joblib.dump({**meta_data, "_series": res["series"]}, meta, compress=3)
 
+    # Simpan ke TiDB
     save_model_to_db(villa_name, res["model"], meta_data, res["series"])
+
+    # Invalidate cache setelah train selesai
+    _invalidate_model_cache(villa_name)
 
     return meta_data
 
@@ -402,11 +441,11 @@ def forecast(villa_name: str,
     pkl  = _pkl_path(villa_name)
     meta = _meta_path(villa_name)
 
+    # Jika file lokal tidak ada, load dari TiDB lalu cache lokal
     if not os.path.exists(pkl):
         model, meta_data = load_model_from_db(villa_name)
         if model is None:
             return pd.DataFrame({"error": ["Model belum ditraining."]})
-
         joblib.dump(model, pkl, compress=("zlib", 6))
         joblib.dump(meta_data, meta, compress=3)
 
@@ -615,10 +654,26 @@ def get_all_meta(villa_names: list) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+# ─── MODEL EXISTS ─────────────────────────────────────────────────────────────
 def model_exists(villa_name: str) -> bool:
+    """
+    Cek apakah model tersedia — lokal dulu, lalu TiDB.
+    Hasil di-cache di memory untuk menghindari query DB berulang.
+    """
+    # Cek cache dulu
+    if villa_name in _model_exists_cache:
+        return _model_exists_cache[villa_name]
+
+    # Cek lokal (cepat)
     if os.path.exists(_pkl_path(villa_name)):
+        _model_exists_cache[villa_name] = True
         return True
-    return model_exists_db(villa_name)
+
+    # Fallback cek TiDB (lambat, hanya sekali per session)
+    result = model_exists_db(villa_name)
+    _model_exists_cache[villa_name] = result
+    return result
+
 
 def models_status(villa_names: list) -> dict:
     return {
