@@ -4,3 +4,10 @@ numpy
 plotly
 python-dotenv
 streamlit-cookies-manager
+SQLAlchemy
+PyMySQL
+scikit-learn
+statsmodels
+joblib
+huggingface_hub
+gdown
