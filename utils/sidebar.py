@@ -59,26 +59,26 @@ def render_sidebar(cookies):
         with st.container():
             if home_active:
                 st.markdown("<div class='nav-active'>", unsafe_allow_html=True)
-            if st.button("🏠  Dashboard", use_container_width=True, key="nav_home"):
+            if st.button("🏠  Dashboard", width='stretch', key="nav_home"):
                 st.switch_page("pages/1_Home.py")
             if home_active:
                 st.markdown("</div>", unsafe_allow_html=True)
 
         # Prediksi SARIMA
-        if st.button("🔮  Prediksi SARIMA", use_container_width=True, key="nav_prediksi"):
+        if st.button("🔮  Prediksi SARIMA", width='stretch', key="nav_prediksi"):
             st.switch_page("pages/2_Prediksi.py")
 
         # Upload Data
-        if st.button("📁  Upload Data", use_container_width=True, key="nav_upload"):
+        if st.button("📁  Upload Data", width='stretch', key="nav_upload"):
             st.switch_page("pages/3_Upload.py")
 
         # User Management (admin only)
         if st.session_state.get("role") == "admin":
-            if st.button("👥  User Management", use_container_width=True, key="nav_users"):
+            if st.button("👥  User Management", width='stretch', key="nav_users"):
                 st.switch_page("pages/4_Users.py")
 
         st.markdown("<hr style='border:none;border-top:1px solid #e2e8f0;margin:16px 0'>",
                     unsafe_allow_html=True)
 
-        if st.button("🚪  Logout", use_container_width=True, key="nav_logout"):
+        if st.button("🚪  Logout", width='stretch', key="nav_logout"):
             logout(cookies)

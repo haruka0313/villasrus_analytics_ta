@@ -136,7 +136,7 @@ with tab_register:
         reg_password = st.text_input("Password *", type="password", key="reg_pw1")
         reg_password2 = st.text_input("Konfirmasi Password *", type="password", key="reg_pw2")
 
-        if st.form_submit_button("📝  Daftar Sekarang", use_container_width=True):
+        if st.form_submit_button("📝  Daftar Sekarang", width='stretch'):
             if not all([reg_fullname, reg_username, reg_password, reg_password2]):
                 st.error("Semua field wajib diisi.")
             elif " " in reg_username:

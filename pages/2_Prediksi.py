@@ -359,7 +359,7 @@ with t1:
 
 with t2:
     if TRAIN_OK and not model_trained:
-        if st.button("🚀 Train Model", use_container_width=True, key="btn_train"):
+        if st.button("🚀 Train Model", width='stretch', key="btn_train"):
             with st.spinner(f"Melatih {sel_villa}... (3-8 menit)"):
                 try:
                     vd     = df_occ[df_occ["villa_name"] == sel_villa].copy()
@@ -375,12 +375,12 @@ with t2:
                     import traceback
                     st.error(f"Error: {e}"); st.code(traceback.format_exc(), language="python")
     else:
-        st.button("🚀 Train Model", use_container_width=True, disabled=True, key="btn_train_dis",
+        st.button("🚀 Train Model", width='stretch', disabled=True, key="btn_train_dis",
                   help="Model sudah dilatih." if model_trained else "sarima_engine tidak tersedia.")
 
 with t3:
     if TRAIN_OK and model_trained:
-        if st.button("🔄 Retrain", use_container_width=True, key="btn_retrain"):
+        if st.button("🔄 Retrain", width='stretch', key="btn_retrain"):
             with st.spinner(f"Retrain {sel_villa}..."):
                 try:
                     vd     = df_occ[df_occ["villa_name"] == sel_villa].copy().sort_values("date")
@@ -396,7 +396,7 @@ with t3:
                     import traceback
                     st.error(f"Error: {e}"); st.code(traceback.format_exc(), language="python")
     else:
-        st.button("🔄 Retrain", use_container_width=True, disabled=True, key="btn_retrain_dis",
+        st.button("🔄 Retrain", width='stretch', disabled=True, key="btn_retrain_dis",
                   help="Train model terlebih dahulu.")
 
 with t4:
@@ -576,7 +576,7 @@ fig_occ.update_layout(
                type="category", categoryorder="array", categoryarray=list(fc_df["month"])),
     yaxis=dict(showgrid=True, gridcolor="#F0F0EE", ticksuffix="%", range=[0,110], tickfont_size=11),
 )
-st.plotly_chart(fig_occ, use_container_width=True)
+st.plotly_chart(fig_occ, width='stretch')
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 4 — PREDIKSI SUMMARY TABLE PER BULAN
@@ -760,7 +760,7 @@ if has_actual and not fc_df.empty:
         yaxis=dict(showgrid=True, gridcolor="#F0F0EE", ticksuffix="pp", tickfont_size=11, zeroline=False),
         showlegend=False,
     )
-    st.plotly_chart(fig_err, use_container_width=True)
+    st.plotly_chart(fig_err, width='stretch')
 
     with st.expander("📋 Lihat detail tabel evaluasi per bulan", expanded=False):
         eval_display = eval_df[["month","predicted","actual","error","ape"]].copy()
@@ -776,7 +776,7 @@ if has_actual and not fc_df.empty:
             eval_display.style
                 .format({"Prediksi (%)":"{:.1f}","Aktual (%)":"{:.1f}","Error (pp)":"{:+.1f}","APE (%)":"{:.1f}%"})
                 .applymap(style_error, subset=["Error (pp)"]),
-            use_container_width=True, hide_index=True,
+            width='stretch', hide_index=True,
         )
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1067,7 +1067,7 @@ else:
                                    showgrid=True, gridcolor="#F0F0EE", ticksuffix=" Jt", tickfont_size=11, rangemode="tozero")
             fig_dual.update_yaxes(title_text="Ocupansi (%)", secondary_y=True,
                                    showgrid=False, ticksuffix="%", range=[0,130], tickfont_size=11)
-            st.plotly_chart(fig_dual, use_container_width=True)
+            st.plotly_chart(fig_dual, width='stretch')
 
             # ── Korelasi scatter: ADR vs Okupansi ────────────────────────────
             if not daily_merged.empty and len(daily_merged) >= 5:
@@ -1137,7 +1137,7 @@ else:
                     yaxis=dict(title="ADR (Juta Rupiah)", showgrid=True, gridcolor="#F0F0EE",
                                ticksuffix=" Jt", tickfont_size=11, rangemode="tozero"),
                 )
-                st.plotly_chart(fig_scatter, use_container_width=True)
+                st.plotly_chart(fig_scatter, width='stretch')
 
                 # Correlation interpretation card
                 abs_r = abs(r_val_sc)

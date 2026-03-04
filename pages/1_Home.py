@@ -447,7 +447,7 @@ fig_port.update_layout(
                range=[0,115], tickfont_size=11, title=""),
     bargap=0.18, bargroupgap=0.04,
 )
-st.plotly_chart(fig_port, use_container_width=True)
+st.plotly_chart(fig_port, width='stretch')
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CHART 2: AREA COMPARISON — Canggu vs Seminyak radar / line
@@ -496,7 +496,7 @@ with col_chart_l:
         yaxis=dict(showgrid=True, gridcolor="#f1f5f9", ticksuffix="%",
                    range=[0,105], tickfont_size=11),
     )
-    st.plotly_chart(fig_area, use_container_width=True)
+    st.plotly_chart(fig_area, width='stretch')
 
 with col_chart_r:
     st.markdown("<div class='section-label'><span>03</span> · Distribusi Performa — Radar per Vila</div>", unsafe_allow_html=True)
@@ -531,7 +531,7 @@ with col_chart_r:
                     font_size=10, bgcolor="rgba(0,0,0,0)"),
         showlegend=True,
     )
-    st.plotly_chart(fig_radar, use_container_width=True)
+    st.plotly_chart(fig_radar, width='stretch')
 
 st.markdown("<hr class='rule'>", unsafe_allow_html=True)
 
@@ -692,13 +692,13 @@ st.markdown("<div class='section-label'>Navigasi Cepat</div>", unsafe_allow_html
 
 nav1, nav2, nav3 = st.columns(3)
 with nav1:
-    if st.button("🔮  Prediksi SARIMA Detail", use_container_width=True):
+    if st.button("🔮  Prediksi SARIMA Detail", width='stretch'):
         st.switch_page("pages/1_Prediksi_SARIMA.py")
 with nav2:
-    if st.button("📤  Upload Data Terbaru", use_container_width=True):
+    if st.button("📤  Upload Data Terbaru", width='stretch'):
         st.switch_page("pages/3_Upload.py")
 with nav3:
-    if st.button("👤  Manajemen User", use_container_width=True):
+    if st.button("👤  Manajemen User", width='stretch'):
         st.switch_page("pages/4_User_Management.py")
 
 # ── Footer ────────────────────────────────────────────────────────────────────

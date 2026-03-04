@@ -301,7 +301,7 @@ with tab1:
                             key=f"role_{uid}",
                         )
                         new_active = st.checkbox("Akun Aktif", value=is_active, key=f"act_{uid}", disabled=is_self)
-                        if st.form_submit_button("💾 Simpan", use_container_width=True):
+                        if st.form_submit_button("💾 Simpan", width='stretch'):
                             if is_self and not new_active:
                                 st.error("Tidak bisa menonaktifkan akun sendiri.")
                             else:
@@ -318,7 +318,7 @@ with tab1:
                     with st.form(key=f"pw_{uid}"):
                         new_pw = st.text_input("Password Baru", type="password", key=f"pw1_{uid}")
                         conf_pw = st.text_input("Konfirmasi", type="password", key=f"pw2_{uid}")
-                        if st.form_submit_button("🔄 Reset", use_container_width=True):
+                        if st.form_submit_button("🔄 Reset", width='stretch'):
                             if not new_pw:
                                 st.error("Password tidak boleh kosong.")
                             elif len(new_pw) < 6:
@@ -340,7 +340,7 @@ with tab1:
                     else:
                         suspend_label = "🔓 Aktifkan" if not is_active else "🔒 Suspend"
                         with st.form(key=f"suspend_{uid}"):
-                            if st.form_submit_button(suspend_label, use_container_width=True):
+                            if st.form_submit_button(suspend_label, width='stretch'):
                                 with st.spinner("Memperbarui status..."):
                                     ok, msg = update_user(uid, fname, urole, 0 if is_active else 1)
                                 if ok:
@@ -352,7 +352,7 @@ with tab1:
                         st.markdown("<div class='danger-panel'>⚠️ Hapus permanen.</div>", unsafe_allow_html=True)
                         with st.form(key=f"del_{uid}"):
                             confirm = st.text_input(f"Ketik '{uname}' untuk konfirmasi", key=f"delc_{uid}")
-                            if st.form_submit_button("🗑️ Hapus", use_container_width=True, type="primary"):
+                            if st.form_submit_button("🗑️ Hapus", width='stretch', type="primary"):
                                 if confirm.strip() == uname:
                                     with st.spinner("Menghapus user..."):
                                         ok, msg = delete_user(uid)
@@ -383,7 +383,7 @@ with tab2:
             new_password2 = st.text_input("Konfirmasi Password *", type="password")
             st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
-            if st.form_submit_button("➕ Buat User Baru", use_container_width=True, type="primary"):
+            if st.form_submit_button("➕ Buat User Baru", width='stretch', type="primary"):
                 if not all([new_username, new_fullname, new_password, new_password2]):
                     st.error("Semua field wajib diisi.")
                 elif " " in new_username:
@@ -475,7 +475,7 @@ with tab3:
                 st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
                 col_approve, col_reject = st.columns(2)
                 with col_approve:
-                    if st.button("✅", key=f"approve_{pid}", help=f"Aktifkan @{puname}", use_container_width=True):
+                    if st.button("✅", key=f"approve_{pid}", help=f"Aktifkan @{puname}", width='stretch'):
                         with st.spinner(f"Mengaktifkan @{puname}..."):
                             ok, msg = activate_user(pid)
                         if ok:
@@ -484,7 +484,7 @@ with tab3:
                         else:
                             st.error(msg)
                 with col_reject:
-                    if st.button("🗑️", key=f"reject_{pid}", help=f"Tolak & hapus @{puname}", use_container_width=True):
+                    if st.button("🗑️", key=f"reject_{pid}", help=f"Tolak & hapus @{puname}", width='stretch'):
                         with st.spinner(f"Menolak @{puname}..."):
                             ok, msg = delete_user(pid)
                         if ok:
