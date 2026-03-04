@@ -235,7 +235,7 @@ def train_all(df_occ: pd.DataFrame,
         res = fit_sarima(series, villa_name)
 
         if res is not None:
-            joblib.dump(res["model"], pkl, compress=("zlib", 6))
+            joblib.dump(res["model"], pkl)
             meta_data = {k: v for k, v in res.items() if k not in ("model", "train", "test", "forecast", "series")}
             meta_data["status"]      = "trained"
             meta_data["data_end"]    = str(res["series"].index[-1].date())
@@ -243,7 +243,7 @@ def train_all(df_occ: pd.DataFrame,
             meta_data["n_test"]      = len(res["test"])
             meta_data["model_path"]  = pkl
             meta_data["_series_end"] = res["series"].index[-1]
-            joblib.dump({**meta_data, "_series": res["series"]}, meta, compress=3)
+            joblib.dump({**meta_data, "_series": res["series"]}, meta)
             results[villa_name] = meta_data
         else:
             results[villa_name] = {"status": "error", "villa_name": villa_name}
@@ -292,14 +292,14 @@ def train_and_save(villa_name: str,
             msg = "fit_sarima gagal — cek terminal/log untuk detail error"
         return {"status": "error", "message": msg}
 
-    joblib.dump(res["model"], pkl, compress=("zlib", 6))
+    joblib.dump(res["model"], pkl)
     meta_data = {k: v for k, v in res.items() if k not in ("model", "train", "test", "forecast")}
     meta_data["status"]     = "trained"
     meta_data["data_end"]   = str(res["series"].index[-1].date())
     meta_data["n_train"]    = len(res["train"])
     meta_data["n_test"]     = len(res["test"])
     meta_data["model_path"] = pkl
-    joblib.dump({**meta_data, "_series": res["series"]}, meta, compress=3)
+    joblib.dump({**meta_data, "_series": res["series"]}, meta)
     return meta_data
 
 
