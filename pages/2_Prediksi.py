@@ -338,7 +338,7 @@ with cc2:
     show_ci = st.toggle("Confidence Interval", value=True, key="sci")
 
 vc = get_color(sel_villa)
-fc_horizon_months = 12
+fc_horizon_months = 6
 fc_horizon_weeks  = int(fc_horizon_months * 4.33)
 
 # ── Model SARIMA status & train ───────────────────────────────────────────────
@@ -462,7 +462,7 @@ if fc_df.empty:
     overall_avg_naive   = vd_naive_weekly.mean() if len(vd_naive_weekly) > 0 else 70.0
 
     rows_fc_weekly = []
-    for d in pd.date_range(FC_START, periods=fc_horizon_weeks, freq="W"):
+    for d in pd.date_range(FC_START, end="2026-06-30", freq="W"):
         pred = float(np.clip(weekly_avg_by_month.get(d.month, overall_avg_naive), 0, 100))
         ci   = pred * 0.10
         rows_fc_weekly.append({"date": d, "month": d.strftime("%b %Y"), "month_num": d.month,
