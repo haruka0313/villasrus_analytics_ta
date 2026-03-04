@@ -114,6 +114,30 @@ def _parse_date(val) -> pd.Timestamp | None:
         return None
 
 
+def _parse_dates_vectorized(series: pd.Series) -> pd.Series:
+    """
+    Vectorized date parsing — jauh lebih cepat dari apply(_parse_date) baris per baris.
+    Coba beberapa format umum, fallback ke pandas inference.
+    """
+    for fmt in ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%Y/%m/%d"]:
+        try:
+            parsed = pd.to_datetime(series, format=fmt, errors="coerce")
+            if parsed.notna().sum() > len(series) * 0.8:
+                return parsed
+        except Exception:
+            pass
+    # Fallback: pandas auto-infer
+    return pd.to_datetime(series, infer_datetime_format=True, errors="coerce")
+
+
+def _parse_numeric_col(series: pd.Series) -> pd.Series:
+    """Vectorized numeric parsing — hapus koma, convert ke float."""
+    return pd.to_numeric(
+        series.astype(str).str.replace(",", "", regex=False).str.strip(),
+        errors="coerce"
+    ).fillna(0.0)
+
+
 def process_occupancy_csv(uploaded_file, villa_code: str) -> dict:
     """
     Parse & clean a Beds24 occupancy CSV.
@@ -149,48 +173,46 @@ def process_occupancy_csv(uploaded_file, villa_code: str) -> dict:
         if col not in df.columns:
             df[col] = 0
 
-    # Parse dates
-    df["date_parsed"] = df["date"].apply(_parse_date)
-    n_bad_dates = df["date_parsed"].isna().sum()
+    # ── FIX: Vectorized date parsing (lebih cepat dari apply row-by-row) ──────
+    df["date_parsed"] = _parse_dates_vectorized(df["date"])
+    n_bad_dates = int(df["date_parsed"].isna().sum())
     if n_bad_dates:
         errors.append(f"⚠️ {n_bad_dates} baris dilewati karena format tanggal tidak valid.")
     df = df.dropna(subset=["date_parsed"])
 
-    # Parse occupancy + clip anomalies
-    df["occ_raw"] = df.apply(
-    lambda r: 100.0 if _safe_int(r.get("booked", 0)) > 0 else 0.0,
-    axis=1
-)
-    anomalies_clipped = int((df["occ_raw"] > 100).sum()) if "occupancy_total" in df.columns else 0
-    # Already capped by _parse_occupancy_pct
+    # ── FIX: Parse occupancy dari kolom occupancy_total (bukan dari booked) ───
+    df["occ_raw"] = df["occupancy_total"].apply(_parse_occupancy_pct)
+    anomalies_clipped = int((df["occ_raw"] >= 100).sum())
+
+    # ── FIX: Vectorized int parsing untuk semua kolom integer ─────────────────
+    for col in int_cols:
+        df[col] = _parse_numeric_col(df[col]).astype(int)
 
     # Remove duplicates by date
-    df = df.drop_duplicates(subset=["date_parsed"], keep="last")
+    df = df.drop_duplicates(subset=["date_parsed"], keep="last").reset_index(drop=True)
 
-    # Build records
-    records = []
-    skipped = 0
-    for _, row in df.iterrows():
-        try:
-            rec = (
-                villa_code,
-                row["date_parsed"].date(),
-                _safe_int(row.get("arrivals", 0)),
-                _safe_int(row.get("arriving_guests", 0)),
-                _safe_int(row.get("departures", 0)),
-                _safe_int(row.get("departing_guests", 0)),
-                _safe_int(row.get("stay_through", 0)),
-                _safe_int(row.get("staying_guests", 0)),
-                _safe_int(row.get("booked", 0)),
-                _safe_int(row.get("booked_guests", 0)),
-                _safe_int(row.get("available", 0)),
-                _safe_int(row.get("black", 0)),
-                round(float(row["occ_raw"]), 2),
-            )
-            records.append(rec)
-        except Exception as e:
-            skipped += 1
-            errors.append(f"Baris {_}: {e}")
+    # ── FIX: Build records dengan zip vectorized (bukan iterrows) ─────────────
+    try:
+        records = list(zip(
+            [villa_code] * len(df),
+            df["date_parsed"].dt.date,
+            df["arrivals"].tolist(),
+            df["arriving_guests"].tolist(),
+            df["departures"].tolist(),
+            df["departing_guests"].tolist(),
+            df["stay_through"].tolist(),
+            df["staying_guests"].tolist(),
+            df["booked"].tolist(),
+            df["booked_guests"].tolist(),
+            df["available"].tolist(),
+            df["black"].tolist(),
+            df["occ_raw"].round(2).tolist(),
+        ))
+        skipped = 0
+    except Exception as e:
+        errors.append(f"Error saat build records: {e}")
+        records = []
+        skipped = len(df)
 
     stats = {
         "total": len(df) + n_bad_dates,
@@ -245,27 +267,30 @@ def process_financial_csv(uploaded_file, villa_code: str) -> dict:
         if col not in df.columns:
             df[col] = 0
 
-    # Parse dates
-    df["date_parsed"] = df["date"].apply(_parse_date)
-    n_bad = df["date_parsed"].isna().sum()
+    # ── FIX: Vectorized date parsing ──────────────────────────────────────────
+    df["date_parsed"] = _parse_dates_vectorized(df["date"])
+    n_bad = int(df["date_parsed"].isna().sum())
     if n_bad:
         errors.append(f"⚠️ {n_bad} baris dilewati karena format tanggal tidak valid.")
     df = df.dropna(subset=["date_parsed"])
 
-    # Parse occupancy
+    # ── FIX: Vectorized occupancy parsing ─────────────────────────────────────
     if "occupancy_pct" in df.columns:
         df["occupancy_pct"] = df["occupancy_pct"].apply(_parse_occupancy_pct)
 
-    # Parse numeric
+    # ── FIX: Vectorized numeric parsing untuk semua kolom revenue ─────────────
     for col in ["room_revenue", "daily_revenue", "avg_daily_revenue", "revpar", "revenue_per_guest"]:
-        df[col] = df[col].apply(_safe_float)
+        df[col] = _parse_numeric_col(df[col])
 
-    for col in ["guests"]:
-        df[col] = df[col].apply(_safe_int)
+    df["guests"] = _parse_numeric_col(df["guests"]).astype(int)
+
+    # ── FIX: Vectorized booked/available flag parsing ─────────────────────────
+    df["booked_flag"]    = (_parse_numeric_col(df["booked_flag"]) >= 1).astype(int)
+    df["available_flag"] = (_parse_numeric_col(df["available_flag"]) >= 1).astype(int)
 
     # ── Duplicates (keep last, still count for stats) ──────────────────────────
-    n_dup = df.duplicated(subset=["date_parsed"]).sum()
-    df = df.drop_duplicates(subset=["date_parsed"], keep="last")
+    n_dup = int(df.duplicated(subset=["date_parsed"]).sum())
+    df = df.drop_duplicates(subset=["date_parsed"], keep="last").reset_index(drop=True)
 
     # ── FLAG 1: is_empty_villa — vila kosong murni (guests == 0) ──────────────
     df["is_empty_villa"] = (df["guests"] == 0).astype(int)
@@ -276,9 +301,6 @@ def process_financial_csv(uploaded_file, villa_code: str) -> dict:
     ).astype(int)
 
     # ── FLAG 3: is_outlier_adr — IQR × 3.5, hanya pada ADR positif ───────────
-    # Validasi silang: outlier hanya dianggap valid jika terjadi saat vila
-    # memang terisi (guests > 0). ADR positif saat vila kosong tidak mungkin
-    # terjadi, sehingga seluruh outlier yang terdeteksi adalah harga nyata.
     df["is_outlier_adr"] = 0
     adr_nonzero = df.loc[df["avg_daily_revenue"] > 0, "avg_daily_revenue"]
     outliers_flagged = 0
@@ -300,36 +322,34 @@ def process_financial_csv(uploaded_file, villa_code: str) -> dict:
             )
 
     # ── FLAG 4: for_modeling — subset bersih untuk SARIMA ─────────────────────
-    # Hanya baris: vila terisi (guests>0) DAN ADR tercatat (>0)
     df["for_modeling"] = (
         (df["guests"] > 0) & (df["avg_daily_revenue"] > 0)
     ).astype(int)
 
-    # ── Build records ──────────────────────────────────────────────────────────
-    records = []
-    skipped = 0
-    for _, row in df.iterrows():
-        try:
-            rec = (
-                villa_code,
-                row["date_parsed"].date(),
-                1 if _safe_float(row.get("booked_flag", 0)) >= 1 else 0,
-                1 if _safe_float(row.get("available_flag", 0)) >= 1 else 0,
-                _safe_int(row.get("guests", 0)),
-                round(float(row["occupancy_pct"]), 2),
-                round(float(row["room_revenue"]), 2),
-                round(float(row["daily_revenue"]), 2),
-                round(float(row["avg_daily_revenue"]), 2),
-                round(float(row["revpar"]), 2),
-                round(float(row["revenue_per_guest"]), 2),
-                int(row["is_empty_villa"]),
-                int(row["is_adr_missing"]),
-                int(row["is_outlier_adr"]),
-                int(row["for_modeling"]),
-            )
-            records.append(rec)
-        except Exception as e:
-            skipped += 1
+    # ── FIX: Build records dengan zip vectorized (bukan iterrows) ─────────────
+    try:
+        records = list(zip(
+            [villa_code] * len(df),
+            df["date_parsed"].dt.date,
+            df["booked_flag"].tolist(),
+            df["available_flag"].tolist(),
+            df["guests"].tolist(),
+            df["occupancy_pct"].round(2).tolist(),
+            df["room_revenue"].round(2).tolist(),
+            df["daily_revenue"].round(2).tolist(),
+            df["avg_daily_revenue"].round(2).tolist(),
+            df["revpar"].round(2).tolist(),
+            df["revenue_per_guest"].round(2).tolist(),
+            df["is_empty_villa"].tolist(),
+            df["is_adr_missing"].tolist(),
+            df["is_outlier_adr"].tolist(),
+            df["for_modeling"].tolist(),
+        ))
+        skipped = 0
+    except Exception as e:
+        errors.append(f"Error saat build records: {e}")
+        records = []
+        skipped = len(df)
 
     zero_revenue_total = int(df["is_empty_villa"].sum() + df["is_adr_missing"].sum())
 
