@@ -3,6 +3,8 @@ import joblib
 import warnings
 import numpy as np
 import pandas as pd
+import io
+from database import run_query, get_conn
 from datetime import timedelta
 
 warnings.filterwarnings("ignore")
@@ -206,6 +208,84 @@ def fit_sarima(series: pd.Series,
         'rating'        : _rating(mape),
     }
 
+def save_model_to_db(villa_name: str, model, meta_data: dict, series) -> bool:
+    """Simpan model + meta ke TiDB sebagai BLOB."""
+    # Serialize ke bytes
+    model_buffer = io.BytesIO()
+    meta_buffer  = io.BytesIO()
+    joblib.dump(model, model_buffer, compress=("zlib", 6))
+    joblib.dump({**meta_data, "_series": series}, meta_buffer, compress=3)
+
+    model_bytes = model_buffer.getvalue()
+    meta_bytes  = meta_buffer.getvalue()
+
+    conn = get_conn()
+    if not conn:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO sarima_models
+                (villa_name, model_blob, meta_blob, mape, rmse, aic)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                model_blob = VALUES(model_blob),
+                meta_blob  = VALUES(meta_blob),
+                mape       = VALUES(mape),
+                rmse       = VALUES(rmse),
+                aic        = VALUES(aic),
+                trained_at = NOW()
+        """, (
+            villa_name,
+            model_bytes,
+            meta_bytes,
+            meta_data.get("mape"),
+            meta_data.get("rmse"),
+            meta_data.get("aic"),
+        ))
+        conn.commit()
+        cursor.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"❌ save_model_to_db error: {e}")
+        return False
+
+
+def load_model_from_db(villa_name: str) -> tuple:
+    """Load model + meta dari TiDB. Returns (model, meta_data) atau (None, None)."""
+    conn = get_conn()
+    if not conn:
+        return None, None
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute(
+            "SELECT model_blob, meta_blob FROM sarima_models WHERE villa_name=%s",
+            (villa_name,)
+        )
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not row:
+            return None, None
+
+        model     = joblib.load(io.BytesIO(row["model_blob"]))
+        meta_data = joblib.load(io.BytesIO(row["meta_blob"]))
+        return model, meta_data
+    except Exception as e:
+        print(f"❌ load_model_from_db error: {e}")
+        return None, None
+
+
+def model_exists_db(villa_name: str) -> bool:
+    """Cek apakah model tersedia di TiDB."""
+    result = run_query(
+        "SELECT id FROM sarima_models WHERE villa_name=%s",
+        (villa_name,)
+    )
+    return result is not None and not result.empty
+
 
 # ─── TRAIN ALL ────────────────────────────────────────────────────────────────
 def train_all(df_occ: pd.DataFrame,
@@ -258,10 +338,19 @@ def train_and_save(villa_name: str,
     pkl  = _pkl_path(villa_name)
     meta = _meta_path(villa_name)
 
-    if os.path.exists(pkl) and os.path.exists(meta) and not force_retrain:
-        cached = joblib.load(meta)
-        cached["status"] = "loaded_from_cache"
-        return cached
+    if not force_retrain:
+        if os.path.exists(pkl) and os.path.exists(meta):
+            cached = joblib.load(meta)
+            cached["status"] = "loaded_from_cache"
+            return cached
+
+        model, meta_data = load_model_from_db(villa_name)
+        if model is not None and meta_data is not None:
+            # Cache ke lokal untuk session ini
+            joblib.dump(model, pkl, compress=("zlib", 6))
+            joblib.dump(meta_data, meta, compress=3)
+            meta_data["status"] = "loaded_from_db"
+            return meta_data
 
     window = CONFIG.get("rolling_window_days")
     if window and len(series) > window:
@@ -292,14 +381,17 @@ def train_and_save(villa_name: str,
             msg = "fit_sarima gagal — cek terminal/log untuk detail error"
         return {"status": "error", "message": msg}
 
-    joblib.dump(res["model"], pkl)
+    joblib.dump(res["model"], pkl, compress=("zlib", 6))
     meta_data = {k: v for k, v in res.items() if k not in ("model", "train", "test", "forecast")}
     meta_data["status"]     = "trained"
     meta_data["data_end"]   = str(res["series"].index[-1].date())
     meta_data["n_train"]    = len(res["train"])
     meta_data["n_test"]     = len(res["test"])
     meta_data["model_path"] = pkl
-    joblib.dump({**meta_data, "_series": res["series"]}, meta)
+    joblib.dump({**meta_data, "_series": res["series"]}, meta, compress=3)
+
+    save_model_to_db(villa_name, res["model"], meta_data, res["series"])
+
     return meta_data
 
 
@@ -311,7 +403,12 @@ def forecast(villa_name: str,
     meta = _meta_path(villa_name)
 
     if not os.path.exists(pkl):
-        return pd.DataFrame({"error": ["Model belum ditraining."]})
+        model, meta_data = load_model_from_db(villa_name)
+        if model is None:
+            return pd.DataFrame({"error": ["Model belum ditraining."]})
+
+        joblib.dump(model, pkl, compress=("zlib", 6))
+        joblib.dump(meta_data, meta, compress=3)
 
     try:
         model       = joblib.load(pkl)
@@ -519,7 +616,9 @@ def get_all_meta(villa_names: list) -> pd.DataFrame:
 
 
 def model_exists(villa_name: str) -> bool:
-    return os.path.exists(_pkl_path(villa_name))
+    if os.path.exists(_pkl_path(villa_name)):
+        return True
+    return model_exists_db(villa_name)
 
 def models_status(villa_names: list) -> dict:
     return {
