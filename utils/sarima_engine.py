@@ -12,7 +12,7 @@ warnings.filterwarnings("ignore")
 # ── Statsmodels ───────────────────────────────────────────────────────────────
 try:
     from statsmodels.tsa.statespace.sarimax import SARIMAX
-    from statsmodels.tsa.stattools import adfuller
+    from statsmodels.tsa.stattools import adfuller, acf
     from sklearn.metrics import mean_absolute_error, mean_squared_error
     STATSMODELS_OK = True
 except ImportError:
@@ -34,13 +34,13 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 CONFIG = {
     "rolling_window_days"  : None,
     "test_size"            : 0.15,
-    "seasonal_period"      : 52,
+    "seasonal_period"      : 52,   # batas atas m — nilai aktual ditentukan otomatis
     "min_train_factor"     : 2,
     "enforce_stationarity" : False,
     "enforce_invertibility": False,
 }
 
-# ─── CACHE model_exists (hindari query TiDB berulang) ────────────────────────
+# ─── CACHE model_exists ───────────────────────────────────────────────────────
 _model_exists_cache: dict = {}
 
 
@@ -58,15 +58,10 @@ def _meta_path(villa_name: str) -> str:
 def _mape(y_true, y_pred) -> float:
     y_true = np.array(y_true, dtype=float)
     y_pred = np.array(y_pred, dtype=float)
-
-    # WAPE (Weighted Absolute Percentage Error)
-    # Lebih stabil untuk data yang ada angka 0-nya
     total_error  = np.sum(np.abs(y_true - y_pred))
     total_actual = np.sum(np.abs(y_true))
-
     if total_actual == 0:
         return 0.0
-
     return float((total_error / total_actual) * 100)
 
 def _mae(y_true, y_pred) -> float:
@@ -82,6 +77,128 @@ def _rating(mape_val: float) -> str:
     return "Perlu Revisi ⚠️"
 
 
+# ─── DETEKSI m DARI ACF ───────────────────────────────────────────────────────
+def _detect_m_from_acf(train: pd.Series, villa_name: str = "") -> int:
+    """
+    Deteksi seasonal period dominan dari ACF secara otomatis.
+
+    Logika:
+    - Cek kandidat lag: 4, 12, 26, 52
+    - Hitung ACF di tiap kandidat lag
+    - Ambil lag dengan ACF tertinggi yang signifikan (> threshold Bartlett)
+    - Kalau tidak ada yang signifikan, fallback ke 4
+
+    Ini sama persis dengan yang dilakukan manual di notebook
+    saat melihat ACF plot — hanya diotomasi.
+    """
+    candidates = [4, 12, 26, 52]
+    n          = len(train)
+
+    # Hitung ACF sampai lag maks yang tersedia
+    max_lag  = min(max(candidates) + 1, n // 2)
+    acf_vals = acf(train, nlags=max_lag, fft=True)
+
+    # Threshold signifikansi Bartlett: 1.96 / sqrt(n)
+    threshold = 1.96 / np.sqrt(n)
+
+    best_m   = 4    # fallback
+    best_val = 0.0
+
+    print(f"  ACF significance (threshold={threshold:.4f}, n={n}):")
+    for m in candidates:
+        if m < len(acf_vals):
+            val = abs(acf_vals[m])
+            sig = val > threshold
+            print(f"    lag {m:2d}: ACF={val:.4f} "
+                  f"{'✅ signifikan' if sig else '❌'}")
+            if sig and val > best_val:
+                best_val = val
+                best_m   = m
+
+    print(f"  → m dari ACF: {best_m} (ACF={best_val:.4f})")
+    return best_m
+
+
+# ─── DETEKSI m SMART ─────────────────────────────────────────────────────────
+def _detect_m_smart(train: pd.Series,
+                    n_train: int,
+                    villa_name: str = "",
+                    max_m: int = 52) -> tuple:
+    """
+    Deteksi m secara cerdas: rule-of-thumb (dari panjang data) + validasi ACF.
+
+    Prinsip utama:
+    - Butuh MINIMAL 2 siklus penuh agar SARIMA bisa estimasi seasonal dengan stabil
+    - Idealnya 3 siklus (contoh: m=52 butuh 156 minggu = 3 tahun data)
+    - Kalau data kurang dari 2 siklus untuk m tertentu → turunkan m
+    - ACF memvalidasi apakah pola seasonal memang ada di data atau tidak
+
+    Returns: (m_used, D_used, n_cycles)
+    """
+    print(f"\n  Deteksi m otomatis [{villa_name}]:")
+    print(f"  n_train={n_train} minggu "
+          f"= {n_train/52:.1f} tahun = {n_train/26:.1f} semester "
+          f"= {n_train/4:.1f} kuartal")
+
+    # ── Kandidat m yang tidak melebihi max_m ──────────────────────
+    candidates = [m for m in [4, 12, 26, 52] if m <= max_m]
+
+    # ── Hitung siklus tersedia per kandidat ───────────────────────
+    print(f"\n  Ketersediaan siklus historis:")
+    cycle_info = {}
+    for m in candidates:
+        n_cyc  = n_train / m
+        cycle_info[m] = n_cyc
+        status = "✅ ideal" if n_cyc >= 3 else "⚠️  minimum" if n_cyc >= 2 else "❌ kurang"
+        print(f"    m={m:2d}: {n_cyc:.1f} siklus {status}")
+
+    # ── Rule: ambil m terbesar dengan >= 2 siklus ─────────────────
+    eligible = [m for m in candidates if cycle_info[m] >= 2.0]
+    if not eligible:
+        m_rule = 4
+        print(f"\n  ⚠️  Tidak ada m dengan >= 2 siklus, fallback m=4")
+    else:
+        m_rule = max(eligible)
+        print(f"\n  Rule-of-thumb → m={m_rule} "
+              f"({cycle_info[m_rule]:.1f} siklus)")
+
+    # ── Validasi ACF ──────────────────────────────────────────────
+    m_acf = _detect_m_from_acf(train, villa_name)
+
+    # ── Rekonsiliasi rule vs ACF ───────────────────────────────────
+    print(f"\n  Rekonsiliasi: rule={m_rule}, ACF={m_acf}")
+
+    if m_acf == m_rule:
+        m_final = m_rule
+        print(f"  ✅ Sepakat → m={m_final}")
+
+    elif m_acf > m_rule:
+        # ACF suggest m lebih besar, tapi data tidak cukup untuk itu
+        # Prioritaskan ketersediaan data
+        m_final = m_rule
+        print(f"  ⚠️  ACF suggest m={m_acf} tapi data hanya cukup "
+              f"untuk m={m_rule} → pakai m={m_final}")
+
+    else:
+        # ACF suggest m lebih kecil — pola musiman besar tidak terkonfirmasi
+        # Percayai ACF, tapi pastikan data cukup untuk m_acf
+        if m_acf in cycle_info and cycle_info[m_acf] >= 2:
+            m_final = m_acf
+            print(f"  ℹ️  ACF={m_acf} < rule={m_rule}, "
+                  f"pola m={m_rule} tidak terkonfirmasi → m={m_final}")
+        else:
+            m_final = m_rule
+            print(f"  ℹ️  ACF={m_acf} tapi siklus tidak cukup → m={m_final}")
+
+    n_cycles_final = cycle_info.get(m_final, n_train / m_final)
+    D_used         = 1 if m_final > 1 else 0
+
+    print(f"\n  ✅ m FINAL = {m_final} "
+          f"({n_cycles_final:.1f} siklus historis, D={D_used})")
+
+    return m_final, D_used, n_cycles_final
+
+
 # ─── FIT SARIMA ───────────────────────────────────────────────────────────────
 def fit_sarima(series: pd.Series,
                villa_name: str,
@@ -91,8 +208,9 @@ def fit_sarima(series: pd.Series,
     if not STATSMODELS_OK:
         return None
 
-    if seasonal_period is None:
-        seasonal_period = CONFIG["seasonal_period"]
+    # seasonal_period dari luar hanya dipakai sebagai BATAS ATAS m
+    # Nilai aktual m ditentukan otomatis oleh _detect_m_smart
+    max_m    = seasonal_period if seasonal_period is not None else CONFIG["seasonal_period"]
     if test_size is None:
         test_size = CONFIG["test_size"]
 
@@ -110,120 +228,109 @@ def fit_sarima(series: pd.Series,
     # ── 3. Split train/test ───────────────────────────────────────
     n_test  = max(int(n * test_size), 4)
     n_train = n - n_test
-
-    # ── 4. m adaptif ─────────────────────────────────────────────
-    if n_train < 2 * seasonal_period:
-        m_used = 4
-        D_used = 1
-        print(f"  ℹ️  [{villa_name}] Data {n} minggu (<104), pakai m=4 (quarterly)")
-    else:
-        m_used = seasonal_period
-        D_used = 1
-        print(f"  ℹ️  [{villa_name}] Data {n} minggu (>=104), pakai m=52 (annual)")
-
-    # ── 5. Validasi minimum data ──────────────────────────────────
-    min_train_needed = max(2 * m_used + 4, 12)
-    if n_train < min_train_needed:
-        print(f"  ⚠️  [{villa_name}] Data terlalu pendek: n_train={n_train}, "
-              f"butuh minimal {min_train_needed} minggu (m={m_used}), skip.")
-        return None
-
-    train, test = s.iloc[:n_train], s.iloc[n_train:]
+    train   = s.iloc[:n_train]
+    test    = s.iloc[n_train:]
 
     print(f"\n{'='*60}")
     print(f"[{villa_name}] SARIMA Fitting")
     print(f"  Data range : {s.index[0].date()} → {s.index[-1].date()} (n={n})")
-    print(f"  Train      : {train.index[0].date()} → {train.index[-1].date()} (n={len(train)})")
-    print(f"  Test       : {test.index[0].date()} → {test.index[-1].date()} (n={len(test)})")
-    print(f"  Skala data : {s.min():.4f} – {s.max():.4f} (0-1)")
-    print(f"  m digunakan: {m_used}")
+    print(f"  Train      : {train.index[0].date()} → {train.index[-1].date()} "
+          f"(n={n_train})")
+    print(f"  Test       : {test.index[0].date()} → {test.index[-1].date()} "
+          f"(n={n_test})")
+    print(f"  Skala data : {s.min():.4f} – {s.max():.4f}")
 
-    # ── 6. FIX: ADF pre-test untuk tentukan d (skip auto-search) ─
-    # Menjalankan ADF sekali di sini jauh lebih cepat daripada
-    # membiarkan auto_arima menjalankan ADF berulang kali secara internal.
-    d_fixed = 1  # fallback aman
+    # ── 4. Deteksi m otomatis dari data ───────────────────────────
+    # Tidak lagi hardcode m=52.
+    # m dipilih berdasarkan:
+    #   (a) Berapa siklus penuh tersedia di data historis (rule)
+    #   (b) Apakah ACF mengkonfirmasi lag seasonal tersebut (validasi)
+    # Kalau data 3 tahun (156 minggu) → ACF lag 52 signifikan → m=52
+    # Kalau data 2 tahun (104 minggu) → ACF lag 52 mungkin tidak signifikan → m=26 atau m=12
+    # Kalau data 1 tahun (52 minggu)  → m=4 atau m=12
+    m_used, D_used, n_cycles = _detect_m_smart(
+        train, n_train, villa_name, max_m=max_m
+    )
+
+    # ── 5. Validasi minimum data ──────────────────────────────────
+    min_train_needed = max(2 * m_used + 4, 12)
+    if n_train < min_train_needed:
+        print(f"  ⚠️  Data terlalu pendek setelah deteksi m: "
+              f"n_train={n_train}, butuh minimal {min_train_needed} "
+              f"minggu (m={m_used}), skip.")
+        return None
+
+    # ── 6. ADF pre-test untuk d ───────────────────────────────────
+    # Jalankan ADF sekali di sini — lebih efisien daripada
+    # membiarkan auto_arima menjalankannya berulang kali secara internal
+    d_fixed = 1
     try:
         adf_pval = adfuller(train, autolag='AIC')[1]
         d_fixed  = 0 if adf_pval < 0.05 else 1
-        print(f"  ADF p-value: {adf_pval:.4f} → d={d_fixed} (stasioner={adf_pval < 0.05})")
+        print(f"\n  ADF p-value: {adf_pval:.4f} → d={d_fixed} "
+              f"(stasioner={adf_pval < 0.05})")
     except Exception as adf_err:
-        print(f"  ADF gagal ({adf_err}), fallback d=1")
+        print(f"\n  ADF gagal ({adf_err}), fallback d=1")
 
     # ── 7. auto_arima ─────────────────────────────────────────────
     print('  Mencari parameter SARIMA...')
 
     if not PMDARIMA_OK:
-        print(f'  ⚠️  pmdarima tidak tersedia, gunakan order default.')
+        print('  ⚠️  pmdarima tidak tersedia, gunakan order default.')
         order   = (1, 1, 1)
         s_order = (1, 1, 1, m_used)
     else:
-        # FIX: Perubahan dari versi sebelumnya:
-        # 1. d=d_fixed     — hasil ADF pre-test, bukan auto-search (hemat banyak waktu)
-        # 2. max_d=1       — d=2 hampir tidak pernah optimal untuk data occupancy 0-1
-        # 3. max_order=5   — batasi total p+q+P+Q ≤ 5, kurangi kombinasi ~60%
-        # 4. with_ols=False — skip OLS pre-screening (tidak relevan untuk SARIMA)
-        # Model yang dihasilkan tetap SARIMA murni, tidak ada perubahan arsitektur.
         auto_model = auto_arima(
             train,
             start_p=0, max_p=2,
             start_q=0, max_q=2,
-            d=d_fixed, max_d=1,      # ← FIX: dari d=None, max_d=2
+            d=d_fixed, max_d=1,      # dari ADF pre-test
             start_P=0, max_P=1,
             start_Q=0, max_Q=1,
             D=D_used,
-            m=m_used,
+            m=m_used,                # dari _detect_m_smart
             seasonal=True,
             information_criterion='aic',
-            stepwise=True,           # stepwise HARUS True agar cepat
+            stepwise=True,
             suppress_warnings=True,
             error_action='ignore',
             trace=False,
             random_state=42,
             n_jobs=1,
-            max_order=5,             # ← FIX: batasi total order
-            with_ols=False,          # ← FIX: skip OLS pre-check
+            max_order=5,
+            with_ols=False,
         )
         order   = auto_model.order
         s_order = auto_model.seasonal_order
 
     print(f"  ARIMA order    : {order}")
     print(f"  Seasonal order : {s_order}")
+    print(f"  m digunakan    : {m_used} ({n_cycles:.1f} siklus dari data)")
 
-    # ── 8. FIX: Refit dengan SARIMAX — optimizer lebih cepat ─────
-    # Perubahan dari versi sebelumnya:
-    # - concentrate_scale=True     : kurangi 1 dimensi optimasi (sigma² dikompres)
-    # - hamilton_representation=False : representasi Lütkepohl lebih efisien untuk m besar
-    # - method='lbfgs'             : gradient-based, jauh lebih cepat dari default 'nm'
-    # - maxiter=200                : batasi iterasi (default 500, jarang butuh sebanyak itu)
-    # - cov_type='none'            : skip hitung covariance matrix
-    #                                (tidak perlu untuk forecast, paling berpengaruh)
-    # - low_memory=True            : kurangi memory footprint saat fitting
-    # CATATAN: cov_type='none' berarti results.summary() tidak tampilkan std error,
-    # tapi confidence interval forecast TETAP bisa dihitung — tidak ada pengaruh
-    # pada akurasi prediksi.
+    # ── 8. Refit dengan SARIMAX + optimizer cepat ────────────────
     results = SARIMAX(
         train,
         order=order,
         seasonal_order=s_order,
         enforce_stationarity=False,
         enforce_invertibility=False,
-        concentrate_scale=True,           # ← FIX
-        hamilton_representation=False,    # ← FIX
+        concentrate_scale=True,
+        hamilton_representation=False,
     ).fit(
         disp=False,
-        method='lbfgs',                   # ← FIX
-        maxiter=200,                      # ← FIX
-        cov_type='none',                  # ← FIX
-        low_memory=True,                  # ← FIX
+        method='lbfgs',
+        maxiter=200,
+        cov_type='none',
+        low_memory=True,
     )
 
     aic = results.aic
     print(f"  AIC            : {aic:.2f}")
 
     # ── 9. Evaluasi test set ──────────────────────────────────────
-    forecast = results.forecast(steps=len(test)).clip(0, 1)
-    y_true   = test.values
-    y_pred   = forecast.values
+    forecast_vals = results.forecast(steps=len(test)).clip(0, 1)
+    y_true        = test.values
+    y_pred        = forecast_vals.values
 
     mae  = _mae(y_true, y_pred)
     rmse = _rmse(y_true, y_pred)
@@ -236,9 +343,11 @@ def fit_sarima(series: pd.Series,
         'model'         : results,
         'train'         : train,
         'test'          : test,
-        'forecast'      : forecast,
+        'forecast'      : forecast_vals,
         'order'         : order,
         'seasonal_order': s_order,
+        'm_used'        : m_used,
+        'n_cycles'      : round(n_cycles, 2),
         'aic'           : aic,
         'mae'           : mae,
         'rmse'          : rmse,
@@ -321,7 +430,6 @@ def load_model_from_db(villa_name: str) -> tuple:
 
 # ─── DB: CHECK MODEL EXISTS ───────────────────────────────────────────────────
 def model_exists_db(villa_name: str) -> bool:
-    """Cek apakah model tersedia di TiDB."""
     result = run_query(
         "SELECT id FROM sarima_models WHERE villa_name=%s",
         (villa_name,)
@@ -331,11 +439,6 @@ def model_exists_db(villa_name: str) -> bool:
 
 # ─── CACHE INVALIDATION ───────────────────────────────────────────────────────
 def _invalidate_model_cache(villa_name: str = None):
-    """
-    Invalidate cache model_exists setelah train selesai.
-    Panggil dengan villa_name untuk invalidate satu villa,
-    atau tanpa argumen untuk invalidate semua.
-    """
     if villa_name:
         _model_exists_cache.pop(villa_name, None)
     else:
@@ -359,9 +462,9 @@ def train_all(df_occ: pd.DataFrame,
             print(f"[{villa_name}] ✅ Loaded from cache")
             continue
 
-        sub    = df_occ[df_occ["villa_name"] == villa_name].copy()
+        sub         = df_occ[df_occ["villa_name"] == villa_name].copy()
         sub["date"] = pd.to_datetime(sub["date"])
-        series = sub.set_index("date")["occupancy_pct"].sort_index()
+        series      = sub.set_index("date")["occupancy_pct"].sort_index()
 
         window = CONFIG.get("rolling_window_days")
         if window and len(series) > window:
@@ -381,10 +484,7 @@ def train_all(df_occ: pd.DataFrame,
             meta_data["_series_end"] = res["series"].index[-1]
             joblib.dump({**meta_data, "_series": res["series"]}, meta, compress=3)
 
-            # Simpan ke TiDB juga
             save_model_to_db(villa_name, res["model"], meta_data, res["series"])
-
-            # Invalidate cache setelah train
             _invalidate_model_cache(villa_name)
 
             results[villa_name] = meta_data
@@ -402,16 +502,13 @@ def train_and_save(villa_name: str,
     meta = _meta_path(villa_name)
 
     if not force_retrain:
-        # Cek cache lokal dulu
         if os.path.exists(pkl) and os.path.exists(meta):
             cached = joblib.load(meta)
             cached["status"] = "loaded_from_cache"
             return cached
 
-        # Fallback: load dari TiDB
         model, meta_data = load_model_from_db(villa_name)
         if model is not None and meta_data is not None:
-            # Cache ke lokal untuk session ini
             joblib.dump(model, pkl, compress=("zlib", 6))
             joblib.dump(meta_data, meta, compress=3)
             meta_data["status"] = "loaded_from_db"
@@ -435,23 +532,16 @@ def train_and_save(villa_name: str,
         s_check = series.resample('W').mean().dropna()
         if s_check.max() > 1.5:
             s_check = s_check / 100.0
-        n          = len(s_check)
-        test_size  = CONFIG["test_size"]
-        s_period   = CONFIG["seasonal_period"]
-        n_test     = max(int(n * test_size), 4)
-        n_train    = n - n_test
-        m_used     = 4 if n_train < 2 * s_period else s_period
-        min_needed = max(2 * m_used + 4, 12)
+        n       = len(s_check)
+        n_test  = max(int(n * CONFIG["test_size"]), 4)
+        n_train = n - n_test
         if not STATSMODELS_OK:
             msg = "statsmodels tidak terinstall"
-        elif n_train < min_needed:
-            msg = (f"Data terlalu pendek: {n} minggu total, n_train={n_train}, "
-                   f"butuh minimal {min_needed} minggu (pakai m={m_used})")
         else:
-            msg = "fit_sarima gagal — cek terminal/log untuk detail error"
+            msg = (f"Data terlalu pendek atau pola seasonal tidak terdeteksi: "
+                   f"{n} minggu total, n_train={n_train}.")
         return {"status": "error", "message": msg}
 
-    # Simpan ke lokal
     joblib.dump(res["model"], pkl, compress=("zlib", 6))
     meta_data = {k: v for k, v in res.items()
                  if k not in ("model", "train", "test", "forecast")}
@@ -462,10 +552,7 @@ def train_and_save(villa_name: str,
     meta_data["model_path"] = pkl
     joblib.dump({**meta_data, "_series": res["series"]}, meta, compress=3)
 
-    # Simpan ke TiDB
     save_model_to_db(villa_name, res["model"], meta_data, res["series"])
-
-    # Invalidate cache setelah train selesai
     _invalidate_model_cache(villa_name)
 
     return meta_data
@@ -478,7 +565,6 @@ def forecast(villa_name: str,
     pkl  = _pkl_path(villa_name)
     meta = _meta_path(villa_name)
 
-    # Jika file lokal tidak ada, load dari TiDB lalu cache lokal
     if not os.path.exists(pkl):
         model, meta_data = load_model_from_db(villa_name)
         if model is None:
@@ -566,8 +652,10 @@ def predict_2026(sarima_result: dict, villa_name: str) -> dict:
 
     print(f"\n{'='*70}")
     print(f"PREDIKSI 2026 (Jan-Jun): {villa_name}")
-    print(f"  Data terakhir      : {last_date.date()}")
-    print(f"  Minggu diprediksi  : {weeks_to_predict}")
+    print(f"  Data terakhir  : {last_date.date()}")
+    print(f"  Weeks predicted: {weeks_to_predict}")
+    print(f"  m digunakan    : {sarima_result.get('m_used','?')} "
+          f"({sarima_result.get('n_cycles','?')} siklus historis)")
 
     try:
         forecast_obj  = model.get_forecast(steps=weeks_to_predict)
@@ -607,7 +695,8 @@ def predict_2026(sarima_result: dict, villa_name: str) -> dict:
         ['month', 'month_name']
     )['predicted_occupancy'].mean()
 
-    print(f"📊 Rata-rata Jan-Jun 2026: {forecast_2026['predicted_occupancy'].mean()*100:.2f}%")
+    print(f"📊 Rata-rata Jan-Jun 2026: "
+          f"{forecast_2026['predicted_occupancy'].mean()*100:.2f}%")
     for (mn, mname), avg in monthly_avg.items():
         print(f"   {mname:10s}: {avg*100:6.2f}%")
 
@@ -669,6 +758,8 @@ def get_all_meta(villa_names: list) -> pd.DataFrame:
                 "Vila"          : name,
                 "Order"         : str(meta.get("order", "-")),
                 "Seasonal Order": str(meta.get("seasonal_order", "-")),
+                "m digunakan"   : meta.get("m_used", "-"),
+                "Siklus"        : meta.get("n_cycles", "-"),
                 "AIC"           : meta.get("aic", "-"),
                 "MAE"           : meta.get("mae", "-"),
                 "RMSE"          : meta.get("rmse", "-"),
@@ -682,6 +773,8 @@ def get_all_meta(villa_names: list) -> pd.DataFrame:
                 "Vila"          : name,
                 "Order"         : "-",
                 "Seasonal Order": "-",
+                "m digunakan"   : "-",
+                "Siklus"        : "-",
                 "AIC"           : "-",
                 "MAE"           : "-",
                 "RMSE"          : "-",
@@ -695,20 +788,11 @@ def get_all_meta(villa_names: list) -> pd.DataFrame:
 
 # ─── MODEL EXISTS ─────────────────────────────────────────────────────────────
 def model_exists(villa_name: str) -> bool:
-    """
-    Cek apakah model tersedia — lokal dulu, lalu TiDB.
-    Hasil di-cache di memory untuk menghindari query DB berulang.
-    """
-    # Cek cache dulu
     if villa_name in _model_exists_cache:
         return _model_exists_cache[villa_name]
-
-    # Cek lokal (cepat)
     if os.path.exists(_pkl_path(villa_name)):
         _model_exists_cache[villa_name] = True
         return True
-
-    # Fallback cek TiDB (lambat, hanya sekali per session)
     result = model_exists_db(villa_name)
     _model_exists_cache[villa_name] = result
     return result
@@ -725,7 +809,9 @@ def engine_info() -> dict:
         "statsmodels_ok"  : STATSMODELS_OK,
         "pmdarima_ok"     : PMDARIMA_OK,
         "data_frequency"  : "weekly",
-        "seasonal_period" : CONFIG["seasonal_period"],
+        "seasonal_period" : f"auto (max={CONFIG['seasonal_period']})",
+        "m_detection"     : "ACF significance + rule-of-thumb (min 2 cycles)",
+        "m_candidates"    : [4, 12, 26, 52],
         "random_state"    : 42,
         "max_p_q"         : 2,
         "max_P_Q"         : 1,
