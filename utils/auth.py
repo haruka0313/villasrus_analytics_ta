@@ -62,7 +62,9 @@ def logout(cookies):
             cookies.save()
     except Exception:
         pass
+
     for k in ["logged_in", "user_id", "username", "full_name", "role"]:
-        # ✅ Fix: jangan hapus _cookie_manager dari session_state
         st.session_state.pop(k, None)
-    st.switch_page("app.py")
+
+    # ✅ Ganti st.switch_page("app.py") → st.rerun()
+    st.rerun()

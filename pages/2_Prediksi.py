@@ -22,6 +22,7 @@ if not st.session_state.get("logged_in"):
         set_session(user_data)
     else:
         st.switch_page("app.py")
+        st.stop()  # ✅ Tambahkan ini agar eksekusi berhenti
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(

@@ -14,12 +14,12 @@ if not cookies.ready():
 
 # ─── AUTH GUARD ──────────────────────────────────────────────────────────────
 if not st.session_state.get("logged_in"):
-    # Coba load dari cookie dulu sebelum redirect
     user_data = load_from_cookie(cookies)
     if user_data:
         set_session(user_data)
     else:
         st.switch_page("app.py")
+        st.stop()  # ✅ Tambahkan ini agar eksekusi berhenti
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
