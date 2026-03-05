@@ -11,46 +11,69 @@ try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass  # dotenv opsional, bisa pakai env variable langsung
+    pass
 
 
-# ─── CONNECTION CONFIG ──────────────────────────────────────────────────────────
+# ─── CONNECTION CONFIG ───────────────────────────────────────────────────────
 def get_db_config():
     try:
-        # Streamlit Cloud — baca dari st.secrets
         return {
-            "host":       st.secrets["DB_HOST"],
-            "port":       int(st.secrets["DB_PORT"]),
-            "user":       st.secrets["DB_USER"],
-            "password":   st.secrets["DB_PASSWORD"],
-            "database":   st.secrets["DB_NAME"],
-            "autocommit": True,
-            "charset":    "utf8mb4",
+            "host":        st.secrets["DB_HOST"],
+            "port":        int(st.secrets["DB_PORT"]),
+            "user":        st.secrets["DB_USER"],
+            "password":    st.secrets["DB_PASSWORD"],
+            "database":    st.secrets["DB_NAME"],
+            "autocommit":  True,
+            "charset":     "utf8mb4",
             "use_unicode": True,
         }
     except Exception:
-        # Lokal — baca dari .env
         return {
-            "host":       os.getenv("DB_HOST", "localhost"),
-            "port":       int(os.getenv("DB_PORT", "3306")),
-            "user":       os.getenv("DB_USER", "root"),
-            "password":   os.getenv("DB_PASSWORD", ""),
-            "database":   os.getenv("DB_NAME", "villas_analytics"),
-            "autocommit": True,
-            "charset":    "utf8mb4",
+            "host":        os.getenv("DB_HOST", "localhost"),
+            "port":        int(os.getenv("DB_PORT", "3306")),
+            "user":        os.getenv("DB_USER", "root"),
+            "password":    os.getenv("DB_PASSWORD", ""),
+            "database":    os.getenv("DB_NAME", "villas_analytics"),
+            "autocommit":  True,
+            "charset":     "utf8mb4",
             "use_unicode": True,
         }
 
 try:
     DB_CONFIG = get_db_config()
-except Exception as e:
+except Exception:
     import traceback
     DB_CONFIG = {}
     print("DB_CONFIG error:", traceback.format_exc())
 
 
+# ─── CONNECTION POOL ─────────────────────────────────────────────────────────
+@st.cache_resource
+def get_connection_pool():
+    """Buat connection pool MySQL — hanya dibuat sekali selama app hidup."""
+    try:
+        pool = pooling.MySQLConnectionPool(
+            pool_name="villa_pool",
+            pool_size=5,
+            **DB_CONFIG,
+        )
+        return pool
+    except mysql.connector.Error as e:
+        st.error(f"❌ Gagal membuat connection pool: {e}")
+        return None
+
+
+def get_conn():
+    pool = get_connection_pool()
+    if pool:
+        try:
+            return pool.get_connection()
+        except mysql.connector.Error as e:
+            st.error(f"❌ Gagal mengambil koneksi: {e}")
+    return None
+
+
 def test_connection() -> dict:
-    """Test koneksi MySQL. Returns {ok, message, version, db_name}"""
     try:
         conn = mysql.connector.connect(**DB_CONFIG)
         cursor = conn.cursor()
@@ -67,34 +90,8 @@ def test_connection() -> dict:
                 "version": None, "db_name": None}
 
 
-@st.cache_resource
-def get_connection_pool():
-    """Buat connection pool MySQL yang di-cache oleh Streamlit."""
-    try:
-        pool = pooling.MySQLConnectionPool(
-            pool_name="villa_pool",
-            pool_size=5,
-            **DB_CONFIG,
-        )
-        return pool
-    except mysql.connector.Error as e:
-        st.error(f"❌ Gagal membuat connection pool: {e}")
-        return None
-
-
-def get_conn():
-    """Ambil satu koneksi dari pool."""
-    pool = get_connection_pool()
-    if pool:
-        try:
-            return pool.get_connection()
-        except mysql.connector.Error as e:
-            st.error(f"❌ Gagal mengambil koneksi: {e}")
-    return None
-
-
+# ─── HELPERS ─────────────────────────────────────────────────────────────────
 def _convert_decimals(df: pd.DataFrame) -> pd.DataFrame:
-    """Convert kolom decimal.Decimal -> float agar kompatibel dengan Python/pandas."""
     import decimal
     for col in df.columns:
         if not df.empty and len(df[col].dropna()) > 0:
@@ -104,8 +101,23 @@ def _convert_decimals(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _to_python(val):
+    import numpy as np
+    if isinstance(val, np.integer):  return int(val)
+    if isinstance(val, np.floating): return float(val)
+    if isinstance(val, np.bool_):    return bool(val)
+    if isinstance(val, np.ndarray):  return val.tolist()
+    return val
+
+
+def _clean_params(params):
+    if params is None:
+        return None
+    return tuple(_to_python(p) for p in params)
+
+
+# ─── QUERY RUNNER ────────────────────────────────────────────────────────────
 def run_query(sql: str, params=None, fetch=True):
-    """Jalankan query, kembalikan DataFrame jika fetch=True."""
     conn = get_conn()
     if not conn:
         return None
@@ -119,8 +131,7 @@ def run_query(sql: str, params=None, fetch=True):
             if not rows:
                 return pd.DataFrame()
             df = pd.DataFrame(rows)
-            df = _convert_decimals(df)
-            return df
+            return _convert_decimals(df)
         else:
             conn.commit()
             cursor.close()
@@ -129,12 +140,12 @@ def run_query(sql: str, params=None, fetch=True):
     except mysql.connector.Error as e:
         st.error(f"DB Error: {e}")
         if conn:
-            conn.close()
+            try: conn.close()
+            except: pass
         return None
 
 
 def run_many(sql: str, data: list):
-    """Bulk insert dengan executemany."""
     conn = get_conn()
     if not conn:
         return False
@@ -149,11 +160,12 @@ def run_many(sql: str, data: list):
     except mysql.connector.Error as e:
         st.error(f"Bulk insert error: {e}")
         if conn:
-            conn.close()
+            try: conn.close()
+            except: pass
         return False
 
 
-# ─── SCHEMA DDL ─────────────────────────────────────────────────────────────────
+# ─── SCHEMA DDL ──────────────────────────────────────────────────────────────
 DDL_STATEMENTS = [
     """
     CREATE TABLE IF NOT EXISTS users (
@@ -233,16 +245,15 @@ DDL_STATEMENTS = [
         avg_daily_revenue   DECIMAL(15,2) DEFAULT 0,
         revpar              DECIMAL(15,2) DEFAULT 0,
         revenue_per_guest   DECIMAL(15,2) DEFAULT 0,
-        is_empty_villa      TINYINT(1)    DEFAULT 0  COMMENT 'Vila kosong murni: guests=0',
-        is_adr_missing      TINYINT(1)    DEFAULT 0  COMMENT 'Vila terisi tapi ADR=0',
-        is_outlier_adr      TINYINT(1)    DEFAULT 0  COMMENT 'ADR melampaui batas IQR×3.5 (flag only)',
-        for_modeling        TINYINT(1)    DEFAULT 0  COMMENT 'Subset bersih: guests>0 AND ADR>0',
+        is_empty_villa      TINYINT(1)    DEFAULT 0,
+        is_adr_missing      TINYINT(1)    DEFAULT 0,
+        is_outlier_adr      TINYINT(1)    DEFAULT 0,
+        for_modeling        TINYINT(1)    DEFAULT 0,
         created_at          DATETIME      DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uq_villa_date (villa_code, date),
         FOREIGN KEY (villa_code) REFERENCES villas(villa_code) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
-    # ── TABEL BARU: sarima_models ─────────────────────────────────────────────
     """
     CREATE TABLE IF NOT EXISTS sarima_models (
         id          INT AUTO_INCREMENT PRIMARY KEY,
@@ -258,29 +269,26 @@ DDL_STATEMENTS = [
     """,
 ]
 
-# ─── MIGRATION: tambah kolom yang mungkin belum ada di tabel lama ──────────────
 DDL_MIGRATIONS = [
-    # financial_data flag columns
-    "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS is_empty_villa  TINYINT(1) DEFAULT 0 COMMENT 'Vila kosong murni: guests=0'",
-    "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS is_adr_missing  TINYINT(1) DEFAULT 0 COMMENT 'Vila terisi tapi ADR=0'",
-    "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS is_outlier_adr  TINYINT(1) DEFAULT 0 COMMENT 'ADR melampaui batas IQR×3.5 (flag only)'",
-    "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS for_modeling     TINYINT(1) DEFAULT 0 COMMENT 'Subset bersih: guests>0 AND ADR>0'",
-    # sarima_models — jaga-jaga jika tabel sudah ada tapi kolom kurang
-    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS mape       FLOAT",
-    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS rmse       FLOAT",
-    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS aic        FLOAT",
-    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS trained_at DATETIME DEFAULT CURRENT_TIMESTAMP",
+    "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS is_empty_villa TINYINT(1) DEFAULT 0",
+    "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS is_adr_missing TINYINT(1) DEFAULT 0",
+    "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS is_outlier_adr TINYINT(1) DEFAULT 0",
+    "ALTER TABLE financial_data ADD COLUMN IF NOT EXISTS for_modeling   TINYINT(1) DEFAULT 0",
+    "ALTER TABLE sarima_models  ADD COLUMN IF NOT EXISTS mape           FLOAT",
+    "ALTER TABLE sarima_models  ADD COLUMN IF NOT EXISTS rmse           FLOAT",
+    "ALTER TABLE sarima_models  ADD COLUMN IF NOT EXISTS aic            FLOAT",
+    "ALTER TABLE sarima_models  ADD COLUMN IF NOT EXISTS trained_at     DATETIME DEFAULT CURRENT_TIMESTAMP",
 ]
 
 SEED_VILLAS = """
     INSERT IGNORE INTO villas (villa_code, villa_name, area, color_hex) VALUES
-    ('briana',   'Briana Villas',  'Canggu',   '#4ECDC4'),
-    ('castello', 'Castello Villas','Canggu',   '#FF6B6B'),
-    ('elina',    'Elina Villas',   'Canggu',   '#FFE66D'),
-    ('isola',    'Isola Villas',   'Canggu',   '#A8E6CF'),
-    ('eindra',   'Eindra Villas',  'Seminyak', '#C084FC'),
-    ('esha',     'Esha Villas',    'Seminyak', '#FB923C'),
-    ('ozamiz',   'Ozamiz Villas',  'Seminyak', '#60A5FA')
+    ('briana',   'Briana Villas',   'Canggu',   '#4ECDC4'),
+    ('castello', 'Castello Villas', 'Canggu',   '#FF6B6B'),
+    ('elina',    'Elina Villas',    'Canggu',   '#FFE66D'),
+    ('isola',    'Isola Villas',    'Canggu',   '#A8E6CF'),
+    ('eindra',   'Eindra Villas',   'Seminyak', '#C084FC'),
+    ('esha',     'Esha Villas',     'Seminyak', '#FB923C'),
+    ('ozamiz',   'Ozamiz Villas',   'Seminyak', '#60A5FA')
 """
 
 SEED_ADMIN = """
@@ -293,35 +301,8 @@ def hash_password(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
 
 
-def _to_python(val):
-    """
-    Convert numpy/pandas types → Python native types agar kompatibel dengan MySQL connector.
-    """
-    import numpy as np
-    if isinstance(val, (np.integer,)):
-        return int(val)
-    if isinstance(val, (np.floating,)):
-        return float(val)
-    if isinstance(val, (np.bool_,)):
-        return bool(val)
-    if isinstance(val, (np.ndarray,)):
-        return val.tolist()
-    return val
-
-
-def _clean_params(params):
-    """Bersihkan semua parameter dari numpy types sebelum dikirim ke MySQL."""
-    if params is None:
-        return None
-    return tuple(_to_python(p) for p in params)
-
-
 def init_db() -> dict:
-    """
-    Buat semua tabel + seed data awal + jalankan migration kolom.
-    Dipanggil otomatis saat pertama kali app dijalankan.
-    Termasuk tabel sarima_models untuk menyimpan model SARIMA.
-    """
+    """Buat semua tabel + seed data + jalankan migration."""
     conn = get_conn()
     if not conn:
         return {"ok": False, "message": "Tidak bisa konek ke database.", "tables_created": []}
@@ -329,8 +310,6 @@ def init_db() -> dict:
     tables_created = []
     try:
         cursor = conn.cursor()
-
-        # Buat semua tabel
         for ddl in DDL_STATEMENTS:
             cursor.execute(ddl)
             words = ddl.split()
@@ -338,31 +317,35 @@ def init_db() -> dict:
                 if w.upper() == "EXISTS" and i + 1 < len(words):
                     tables_created.append(words[i + 1].strip())
                     break
-
-        # Jalankan migration (ADD COLUMN IF NOT EXISTS)
         for migration in DDL_MIGRATIONS:
             try:
                 cursor.execute(migration)
             except Exception:
-                pass  # Kolom sudah ada, abaikan error
-
-        # Seed data
+                pass
         cursor.execute(SEED_VILLAS)
         cursor.execute(SEED_ADMIN, (hash_password("admin123"),))
         conn.commit()
         cursor.close()
         conn.close()
-        return {
-            "ok": True,
-            "message": "Database berhasil diinisialisasi (termasuk tabel sarima_models).",
-            "tables_created": tables_created,
-        }
+        return {"ok": True, "message": "Database berhasil diinisialisasi.",
+                "tables_created": tables_created}
     except mysql.connector.Error as e:
         return {"ok": False, "message": f"Init DB error: {e}",
                 "tables_created": tables_created}
 
 
-# ─── AUTH ───────────────────────────────────────────────────────────────────────
+# ─── KUNCI OPTIMASI: init_db hanya jalan SEKALI selama app hidup ─────────────
+@st.cache_resource
+def init_db_once() -> dict:
+    """
+    Wrapper init_db dengan cache_resource — hanya dieksekusi satu kali
+    selama app process hidup, tidak tergantung session/user.
+    Jauh lebih efisien daripada cek session_state di setiap halaman.
+    """
+    return init_db()
+
+
+# ─── AUTH ─────────────────────────────────────────────────────────────────────
 def get_user_by_credentials(username: str, password: str):
     hashed = hash_password(password)
     df = run_query(
@@ -412,17 +395,22 @@ def delete_user(user_id):
     )
 
 
-# ─── VILLAS ─────────────────────────────────────────────────────────────────────
+# ─── VILLAS ──────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=3600)
 def get_villas():
     return run_query("SELECT * FROM villas WHERE is_active=1 ORDER BY area,villa_name")
 
 
-# ─── OCCUPANCY DATA ─────────────────────────────────────────────────────────────
+# ─── OCCUPANCY DATA ──────────────────────────────────────────────────────────
+@st.cache_data(ttl=3600)
 def get_occupancy_data(villa_codes=None, date_from=None, date_to=None):
     sql = """
-        SELECT o.*, v.villa_name, v.area, v.color_hex
+        SELECT o.villa_code, o.date, o.occupancy_pct,
+               o.booked, o.staying_guests, o.available,
+               v.villa_name, v.area, v.color_hex
         FROM occupancy_data o
-        JOIN villas v ON o.villa_code=v.villa_code WHERE 1=1
+        JOIN villas v ON o.villa_code = v.villa_code
+        WHERE 1=1
     """
     params = []
     if villa_codes:
@@ -432,15 +420,37 @@ def get_occupancy_data(villa_codes=None, date_from=None, date_to=None):
         sql += " AND o.date >= %s"; params.append(date_from)
     if date_to:
         sql += " AND o.date <= %s"; params.append(date_to)
-    return run_query(sql + " ORDER BY o.date", params)
+    return run_query(sql + " ORDER BY o.date", params or None)
 
 
-# ─── FINANCIAL DATA ─────────────────────────────────────────────────────────────
+@st.cache_data(ttl=3600)
+def get_occupancy_data_full(villa_codes=None, date_from=None, date_to=None):
+    """Versi lengkap semua kolom — pakai hanya jika memang butuh kolom detail."""
+    sql = """
+        SELECT o.*, v.villa_name, v.area, v.color_hex
+        FROM occupancy_data o
+        JOIN villas v ON o.villa_code = v.villa_code
+        WHERE 1=1
+    """
+    params = []
+    if villa_codes:
+        sql += f" AND o.villa_code IN ({','.join(['%s']*len(villa_codes))})"
+        params.extend(villa_codes)
+    if date_from:
+        sql += " AND o.date >= %s"; params.append(date_from)
+    if date_to:
+        sql += " AND o.date <= %s"; params.append(date_to)
+    return run_query(sql + " ORDER BY o.date", params or None)
+
+
+# ─── FINANCIAL DATA ──────────────────────────────────────────────────────────
+@st.cache_data(ttl=3600)
 def get_financial_data(villa_codes=None, date_from=None, date_to=None):
     sql = """
         SELECT f.*, v.villa_name, v.area, v.color_hex
         FROM financial_data f
-        JOIN villas v ON f.villa_code=v.villa_code WHERE 1=1
+        JOIN villas v ON f.villa_code = v.villa_code
+        WHERE 1=1
     """
     params = []
     if villa_codes:
@@ -450,18 +460,15 @@ def get_financial_data(villa_codes=None, date_from=None, date_to=None):
         sql += " AND f.date >= %s"; params.append(date_from)
     if date_to:
         sql += " AND f.date <= %s"; params.append(date_to)
-    return run_query(sql + " ORDER BY f.date", params)
+    return run_query(sql + " ORDER BY f.date", params or None)
 
 
+@st.cache_data(ttl=3600)
 def get_financial_data_for_modeling(villa_codes=None, date_from=None, date_to=None):
-    """
-    Ambil subset data finansial yang siap pemodelan:
-    for_modeling=1 (guests>0 AND ADR>0), outlier ADR tetap disertakan (flag only).
-    """
     sql = """
         SELECT f.*, v.villa_name, v.area, v.color_hex
         FROM financial_data f
-        JOIN villas v ON f.villa_code=v.villa_code
+        JOIN villas v ON f.villa_code = v.villa_code
         WHERE f.for_modeling = 1
     """
     params = []
@@ -472,20 +479,17 @@ def get_financial_data_for_modeling(villa_codes=None, date_from=None, date_to=No
         sql += " AND f.date >= %s"; params.append(date_from)
     if date_to:
         sql += " AND f.date <= %s"; params.append(date_to)
-    return run_query(sql + " ORDER BY f.date", params)
+    return run_query(sql + " ORDER BY f.date", params or None)
 
 
-# ─── SARIMA MODELS ──────────────────────────────────────────────────────────────
+# ─── SARIMA MODELS ───────────────────────────────────────────────────────────
 def get_sarima_model(villa_name: str):
-    """Ambil satu baris sarima_models berdasarkan villa_name."""
     return run_query(
-        "SELECT * FROM sarima_models WHERE villa_name=%s",
-        (villa_name,)
+        "SELECT * FROM sarima_models WHERE villa_name=%s", (villa_name,)
     )
 
 
 def get_all_sarima_models():
-    """Ambil semua model SARIMA yang sudah ditraining."""
     return run_query(
         "SELECT villa_name, mape, rmse, aic, trained_at "
         "FROM sarima_models ORDER BY villa_name"
@@ -493,14 +497,13 @@ def get_all_sarima_models():
 
 
 def delete_sarima_model(villa_name: str):
-    """Hapus model SARIMA dari database (untuk force retrain)."""
     return run_query(
         "DELETE FROM sarima_models WHERE villa_name=%s",
         (villa_name,), fetch=False
     )
 
 
-# ─── INSERT BULK ────────────────────────────────────────────────────────────────
+# ─── INSERT BULK ─────────────────────────────────────────────────────────────
 def insert_occupancy_bulk(records: list):
     sql = """
         INSERT INTO occupancy_data
@@ -509,17 +512,14 @@ def insert_occupancy_bulk(records: list):
              booked_guests,available,black,occupancy_pct)
         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON DUPLICATE KEY UPDATE
-            occupancy_pct=VALUES(occupancy_pct),
-            booked=VALUES(booked),staying_guests=VALUES(staying_guests)
+            occupancy_pct   = VALUES(occupancy_pct),
+            booked          = VALUES(booked),
+            staying_guests  = VALUES(staying_guests)
     """
     return run_many(sql, records)
 
 
 def insert_financial_bulk(records: list):
-    """
-    Bulk insert data finansial beserta kolom flag.
-    Setiap record harus berisi 15 nilai (termasuk 4 flag kolom).
-    """
     sql = """
         INSERT INTO financial_data
             (villa_code, date, booked_flag, available_flag, guests,
@@ -540,7 +540,7 @@ def insert_financial_bulk(records: list):
     return run_many(sql, records)
 
 
-# ─── UPLOAD LOGS ────────────────────────────────────────────────────────────────
+# ─── UPLOAD LOGS ─────────────────────────────────────────────────────────────
 def log_upload(filename, file_type, villa_code, rows_total,
                rows_imported, rows_skipped, status, user_id, notes=""):
     return run_query(
@@ -558,12 +558,12 @@ def get_upload_logs():
     return run_query("""
         SELECT l.*, u.username, u.full_name
         FROM upload_logs l
-        LEFT JOIN users u ON l.uploaded_by=u.id
+        LEFT JOIN users u ON l.uploaded_by = u.id
         ORDER BY l.uploaded_at DESC LIMIT 100
     """)
 
 
-# ─── DATA SUMMARY ───────────────────────────────────────────────────────────────
+# ─── DATA SUMMARY ────────────────────────────────────────────────────────────
 def get_data_summary():
     return run_query("""
         SELECT v.villa_name, v.area,
@@ -572,8 +572,8 @@ def get_data_summary():
                MIN(o.date)            AS occ_from,
                MAX(o.date)            AS occ_to
         FROM villas v
-        LEFT JOIN occupancy_data o ON v.villa_code=o.villa_code
-        LEFT JOIN financial_data f ON v.villa_code=f.villa_code
-        GROUP BY v.villa_code,v.villa_name,v.area
-        ORDER BY v.area,v.villa_name
+        LEFT JOIN occupancy_data o ON v.villa_code = o.villa_code
+        LEFT JOIN financial_data f ON v.villa_code = f.villa_code
+        GROUP BY v.villa_code, v.villa_name, v.area
+        ORDER BY v.area, v.villa_name
     """)

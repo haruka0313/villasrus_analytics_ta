@@ -1,7 +1,7 @@
 import streamlit as st
 import hashlib
 from dotenv import load_dotenv
-from database import init_db, get_user_by_credentials, run_query
+from database import init_db_once, get_user_by_credentials, run_query
 from utils.auth import get_cookie_manager, set_session, save_to_cookie, load_from_cookie
 
 load_dotenv()
@@ -19,8 +19,25 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ... (CSS sama seperti sebelumnya)
+# ─── INIT DB — hanya jalan sekali selama app process hidup ───────────────────
+# Tidak lagi pakai session_state karena cache_resource lebih reliable
+# di Streamlit Cloud (tidak reset setiap session baru)
+init_db_once()
 
+# ─── AUTO-LOGIN ──────────────────────────────────────────────────────────────
+if not st.session_state.get("logged_in"):
+    user_data = load_from_cookie(cookies)
+    if user_data:
+        set_session(user_data)
+        st.switch_page("pages/1_Home.py")
+        st.stop()
+
+if st.session_state.get("logged_in"):
+    st.switch_page("pages/1_Home.py")
+    st.stop()
+
+
+# ─── HELPERS ─────────────────────────────────────────────────────────────────
 def hash_password(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
 
@@ -38,25 +55,45 @@ def register_user(username, full_name, password):
     return (True, "Registrasi berhasil! Tunggu aktivasi Admin.") if ok else (False, "Gagal mendaftar.")
 
 
-# ─── INIT DB ─────────────────────────────────────────────────────────────────
-if "db_initialized" not in st.session_state:
-    with st.spinner("Menginisialisasi database..."):
-        init_db()
-    st.session_state["db_initialized"] = True
+# ─── CSS ─────────────────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&family=DM+Mono:wght@400;500&display=swap');
 
-# ─── AUTO-LOGIN ──────────────────────────────────────────────────────────────
-if not st.session_state.get("logged_in"):
-    user_data = load_from_cookie(cookies)
-    if user_data:
-        set_session(user_data)
-        st.switch_page("pages/1_Home.py")
-        st.stop()
+  html, body, [class*="css"] { font-family: 'Sora', sans-serif; }
+  .stApp { background: #f0f6ff !important; }
+  #MainMenu, footer, header { visibility: hidden; }
+  [data-testid="stSidebar"] { display: none !important; }
 
-if st.session_state.get("logged_in"):
-    st.switch_page("pages/1_Home.py")
-    st.stop()
+  .auth-wrap {
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    min-height: 80vh; padding: 20px;
+  }
+  .auth-card {
+    text-align: center; margin-bottom: 8px;
+  }
+  .brand-logo  { font-size: 52px; line-height: 1; }
+  .brand-title {
+    font-size: 28px; font-weight: 700;
+    color: #0f172a; margin: 8px 0 4px;
+  }
+  .brand-sub {
+    font-family: 'DM Mono', monospace;
+    font-size: 10px; letter-spacing: .18em;
+    text-transform: uppercase; color: #94a3b8;
+    margin-bottom: 24px;
+  }
+  .hint-box, .reg-info {
+    background: #eff6ff; border: 1px solid #bfdbfe;
+    border-radius: 8px; padding: 10px 14px;
+    font-size: 12px; color: #1d4ed8; margin-top: 12px;
+  }
+  .reg-info { background: #fafafa; border-color: #e2e8f0; color: #64748b; }
+</style>
+""", unsafe_allow_html=True)
 
-# ─── UI LOGIN ────────────────────────────────────────────────────────────────
+# ─── UI ──────────────────────────────────────────────────────────────────────
 st.markdown("<div class='auth-wrap'>", unsafe_allow_html=True)
 st.markdown("""
 <div class='auth-card'>
@@ -71,7 +108,7 @@ tab_login, tab_register = st.tabs(["🔐 Login", "📝 Daftar Akun"])
 with tab_login:
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
-    with st.form("form_login"):  # ✅ Wrap in form untuk better UX
+    with st.form("form_login"):
         username = st.text_input("Username", placeholder="Masukkan username", key="login_user")
         password = st.text_input("Password", type="password", placeholder="Masukkan password", key="login_pass")
         submit_login = st.form_submit_button("🔐  Masuk ke Dashboard", use_container_width=True)
@@ -97,9 +134,9 @@ with tab_login:
 
 with tab_register:
     with st.form("form_register", clear_on_submit=True):
-        reg_fullname = st.text_input("Nama Lengkap *", key="reg_fname")
-        reg_username = st.text_input("Username *", key="reg_uname")
-        reg_password = st.text_input("Password *", type="password", key="reg_pw1")
+        reg_fullname  = st.text_input("Nama Lengkap *", key="reg_fname")
+        reg_username  = st.text_input("Username *",     key="reg_uname")
+        reg_password  = st.text_input("Password *",     type="password", key="reg_pw1")
         reg_password2 = st.text_input("Konfirmasi Password *", type="password", key="reg_pw2")
         submit_register = st.form_submit_button("📝  Daftar Sekarang", use_container_width=True)
 
