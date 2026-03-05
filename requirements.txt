@@ -5,6 +5,7 @@ plotly
 python-dotenv
 streamlit-cookies-manager
 mysql-connector-python
+cryptography
 scikit-learn
 statsmodels
 pmdarima
