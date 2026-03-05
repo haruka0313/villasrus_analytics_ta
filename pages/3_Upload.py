@@ -27,7 +27,6 @@ if not st.session_state.get("logged_in"):
 # ─── STEP 3: Handle Logout (BEFORE page config & sidebar) ───────────────────
 if st.session_state.get("do_logout"):
     logout(cookies)
-    st.switch_page("streamlit_app.py")  # ✅ FIXED
     st.stop()
 
 # ─── STEP 4: Configure Page ─────────────────────────────────────────────────
