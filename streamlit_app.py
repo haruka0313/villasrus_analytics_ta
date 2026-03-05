@@ -1,10 +1,11 @@
 import streamlit as st
+st.cache = st.cache_data  # monkey-patch: fix st.cache deprecated di streamlit-cookies-manager
+# ─────────────────────────────────────────────────────────────────────────────
+
 import hashlib
 from dotenv import load_dotenv
 from database import init_db_once, get_user_by_credentials, run_query
 from utils.auth import get_cookie_manager, set_session, save_to_cookie, load_from_cookie
-import subprocess, sys
-subprocess.run([sys.executable, "apply_patch.py"], check=False)
 
 load_dotenv()
 

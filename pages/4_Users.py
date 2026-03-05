@@ -1,4 +1,5 @@
 import streamlit as st
+st.cache = st.cache_data
 import hashlib
 import pandas as pd
 from database import get_conn, run_query

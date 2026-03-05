@@ -1,4 +1,8 @@
+# ─── PATCH WAJIB PALING ATAS ─────────────────────────────────────────────────
 import streamlit as st
+st.cache = st.cache_data  # fix st.cache deprecated di streamlit-cookies-manager
+# ─────────────────────────────────────────────────────────────────────────────
+
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
