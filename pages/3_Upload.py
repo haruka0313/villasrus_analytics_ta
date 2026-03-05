@@ -7,39 +7,42 @@ from database import (
     log_upload, get_upload_logs, get_data_summary, get_conn
 )
 from utils.data_processor import process_occupancy_csv, process_financial_csv
-from utils.auth import get_cookie_manager, set_session, load_from_cookie
+from utils.auth import get_cookie_manager, set_session, load_from_cookie, logout
 from utils.sidebar import render_sidebar
 
-# ─── LOGOUT HANDLER ──────────────────────────────────────────────────────────
-if st.session_state.get("do_logout"):
-    from utils.auth import logout
-    logout(cookies)
-    st.switch_page("app.py")
-    st.stop()
 
 # ─── WAJIB DI PALING ATAS ────────────────────────────────────────────────────
 cookies = get_cookie_manager()
 if not cookies.ready():
     st.stop()
 
-# ─── AUTH GUARD ──────────────────────────────────────────────────────────────
+ # ─── AUTH GUARD ──────────────────────────────────────────────────────────────
 if not st.session_state.get("logged_in"):
     user_data = load_from_cookie(cookies)
     if user_data:
         set_session(user_data)
     else:
-        st.switch_page("app.py")
-        st.stop()  # ✅ Tambahkan ini agar eksekusi berhenti
+        st.switch_page("streamlit_app.py")
+        st.stop()
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="...",
-    page_icon="...",
+    page_title="Dashboard — Villas R Us",
+    page_icon="🏝",
     layout="wide",
-    initial_sidebar_state="expanded",  # ← EXPANDED bukan collapsed
+    initial_sidebar_state="expanded",
 )
 
+# SIDEBAR
 render_sidebar(cookies)
+
+# ─── LOGOUT HANDLER ──────────────────────────────────────────────────────────
+if st.session_state.get("do_logout"):
+    logout(cookies)
+    st.switch_page("streamlit_app.py")
+    st.stop()
+
+from database import get_occupancy_data, get_financial_data, get_villas
 
 # ─── VILLA CRUD HELPERS ─────────────────────────────────────────────────────────
 def add_villa(villa_code: str, villa_name: str, area: str, description: str=""):

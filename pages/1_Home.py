@@ -6,28 +6,22 @@ from plotly.subplots import make_subplots
 import warnings
 
 warnings.filterwarnings("ignore")
-from utils.auth import get_cookie_manager, set_session, load_from_cookie
+from utils.auth import get_cookie_manager, set_session, load_from_cookie, logout
 from utils.sidebar import render_sidebar
-
-# ─── LOGOUT HANDLER ──────────────────────────────────────────────────────────
-if st.session_state.get("do_logout"):
-    from utils.auth import logout
-    logout(cookies)
-    st.switch_page("app.py")
-    st.stop()
 
 # ─── WAJIB DI PALING ATAS ────────────────────────────────────────────────────
 cookies = get_cookie_manager()
 if not cookies.ready():
     st.stop()
 
-# ─── AUTH GUARD ──────────────────────────────────────────────────────────────
+ # ─── AUTH GUARD ──────────────────────────────────────────────────────────────
 if not st.session_state.get("logged_in"):
     user_data = load_from_cookie(cookies)
     if user_data:
         set_session(user_data)
     else:
-        st.switch_page("app.py")
+        st.switch_page("streamlit_app.py")
+        st.stop()
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -37,7 +31,14 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# SIDEBAR
 render_sidebar(cookies)
+
+# ─── LOGOUT HANDLER ──────────────────────────────────────────────────────────
+if st.session_state.get("do_logout"):
+    logout(cookies)
+    st.switch_page("streamlit_app.py")
+    st.stop()
 
 from database import get_occupancy_data, get_financial_data, get_villas
 
