@@ -20,10 +20,10 @@ def render_sidebar(cookies):
         st.markdown("<div style='font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px'>Menu</div>", unsafe_allow_html=True)
 
         if st.button("🏠 Dashboard", use_container_width=True, key="nav_dashboard"):
-            st.switch_page("pages/2_Dashboard.py")
+            st.switch_page("pages/1_Home.py")
 
         if st.button("🔮 Prediksi SARIMA", use_container_width=True, key="nav_sarima"):
-            st.switch_page("pages/1_Prediksi_SARIMA.py")
+            st.switch_page("pages/2_Prediksi.py")
 
         if st.button("📤 Upload Data", use_container_width=True, key="nav_upload"):
             st.switch_page("pages/3_Upload.py")
@@ -31,7 +31,7 @@ def render_sidebar(cookies):
         # Admin-only menu
         if st.session_state.get("role") == "admin":
             if st.button("👥 User Management", use_container_width=True, key="nav_users"):
-                st.switch_page("pages/4_User_Management.py")
+                st.switch_page("pages/4_Users.py")
 
         st.markdown("<hr style='border:none;border-top:1px solid #e2e8f0;margin:16px 0'>", unsafe_allow_html=True)
 
