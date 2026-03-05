@@ -61,10 +61,7 @@ def load_from_cookie(cookies) -> dict | None:
     except Exception:
         return None
 
-
 def logout(cookies):
-    """Clear cookie, clear session, lalu redirect ke login."""
-    # 1. Hapus cookie
     try:
         if COOKIE_KEY in cookies:
             del cookies[COOKIE_KEY]
@@ -72,13 +69,9 @@ def logout(cookies):
     except Exception:
         pass
 
-    # 2. Hapus semua session state
     for key in list(st.session_state.keys()):
         del st.session_state[key]
 
-    # 3. Set state bersih
     st.session_state["logged_in"] = False
     st.session_state["do_logout"] = False
-
-    # 4. ← INI YANG KURANG: redirect ke login
-    st.switch_page(LOGIN_PAGE)
+    st.session_state["redirect_to_login"] = True

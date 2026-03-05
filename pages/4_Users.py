@@ -18,12 +18,18 @@ if not st.session_state.get("logged_in"):
     if user_data:
         set_session(user_data)
     else:
-        st.switch_page("app.py")
+        st.switch_page("streamlit_app.py")
         st.stop()
 
-# ─── STEP 3: Handle Logout (BEFORE page config & sidebar) ───────────────────
+# ─── STEP 3: Handle Logout ───────────────────────────────────────────────────
+if st.session_state.get("redirect_to_login"):       # ← TAMBAH INI DULU
+    st.session_state["redirect_to_login"] = False
+    st.switch_page("streamlit_app.py")
+    st.stop()
+
 if st.session_state.get("do_logout"):
     logout(cookies)
+    st.rerun()                                       # ← rerun, bukan st.stop()
     st.stop()
 
 # ─── STEP 4: Configure Page ─────────────────────────────────────────────────
