@@ -1,4 +1,5 @@
 import streamlit as st
+st.cache = st.cache_data
 import pandas as pd
 from datetime import datetime
 
