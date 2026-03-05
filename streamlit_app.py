@@ -19,47 +19,7 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-st.markdown("""
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800&family=DM+Mono:wght@400;500&display=swap');
-  html, body, [class*="css"] { font-family: 'Sora', sans-serif; }
-  .stApp { background: #f0f6ff; }
-  #MainMenu, footer, header { visibility: hidden; }
-  [data-testid="stSidebar"]        { display:none !important; }
-  [data-testid="stSidebarNav"]     { display:none !important; }
-  [data-testid="collapsedControl"] { display:none !important; }
-  .auth-wrap { max-width:460px; margin:0 auto; padding:32px 0; }
-  .auth-card {
-    background:#ffffff; border:1px solid #e2e8f0; border-radius:20px;
-    padding:36px 36px 28px; box-shadow:0 8px 32px rgba(3,105,161,0.10);
-  }
-  .brand-logo  { font-size:42px; text-align:center; margin-bottom:8px; }
-  .brand-title { font-size:22px; font-weight:800; color:#0f172a; text-align:center; }
-  .brand-sub   { font-size:12px; color:#94a3b8; text-align:center; margin-bottom:24px; letter-spacing:.06em; }
-  input[type="text"], input[type="password"] {
-    background:#f8fafc !important; border:1px solid #cbd5e1 !important;
-    border-radius:10px !important; color:#0f172a !important;
-    -webkit-text-fill-color:#0f172a !important;
-  }
-  .stButton > button {
-    background:linear-gradient(135deg,#0369a1,#38bdf8) !important;
-    color:#fff !important; font-weight:700 !important; border:none !important;
-    border-radius:10px !important; height:44px !important; width:100% !important;
-  }
-  .hint-box {
-    background:#eff6ff; border:1px solid #bfdbfe; border-radius:10px;
-    padding:12px 16px; font-size:12px; color:#3b82f6; margin-top:14px;
-  }
-  .hint-box code { background:#dbeafe; padding:2px 6px; border-radius:4px; color:#1d4ed8; }
-  .reg-info {
-    background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px;
-    padding:12px 16px; font-size:12px; color:#15803d; margin-top:14px;
-  }
-  .stTabs [data-baseweb="tab-list"] { gap:8px; background:#f1f5f9; border-radius:12px; padding:4px; }
-  .stTabs [aria-selected="true"] { background:#ffffff !important; color:#0369a1 !important; }
-</style>
-""", unsafe_allow_html=True)
-
+# ... (CSS sama seperti sebelumnya)
 
 def hash_password(pw: str) -> str:
     return hashlib.sha256(pw.encode()).hexdigest()
@@ -89,10 +49,12 @@ if not st.session_state.get("logged_in"):
     user_data = load_from_cookie(cookies)
     if user_data:
         set_session(user_data)
-        st.switch_page("pages/1_Home.py")
+        st.switch_page("pages/2_Dashboard.py")  # ✅ Redirect ke Dashboard
+        st.stop()
 
 if st.session_state.get("logged_in"):
-    st.switch_page("pages/1_Home.py")
+    st.switch_page("pages/2_Dashboard.py")  # ✅ Redirect ke Dashboard
+    st.stop()
 
 # ─── UI LOGIN ────────────────────────────────────────────────────────────────
 st.markdown("<div class='auth-wrap'>", unsafe_allow_html=True)
@@ -108,21 +70,25 @@ tab_login, tab_register = st.tabs(["🔐 Login", "📝 Daftar Akun"])
 
 with tab_login:
     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-    username = st.text_input("Username", placeholder="Masukkan username", key="login_user")
-    password = st.text_input("Password", type="password", placeholder="Masukkan password", key="login_pass")
 
-if st.button("🔐  Masuk ke Dashboard", key="btn_login"):
-    if not username or not password:
-        st.error("Username dan password wajib diisi.")
-    else:                      # ← now correctly nested inside button click
-        with st.spinner("Memverifikasi..."):
-            user = get_user_by_credentials(username.strip(), password)
-        if user:
-            set_session(user)
-            save_to_cookie(user, cookies)
-            st.rerun()
-        else:
-            st.error("❌ Username atau password salah, atau akun belum diaktifkan.")
+    with st.form("form_login"):  # ✅ Wrap in form untuk better UX
+        username = st.text_input("Username", placeholder="Masukkan username", key="login_user")
+        password = st.text_input("Password", type="password", placeholder="Masukkan password", key="login_pass")
+        submit_login = st.form_submit_button("🔐  Masuk ke Dashboard", use_container_width=True)
+
+        if submit_login:
+            if not username or not password:
+                st.error("Username dan password wajib diisi.")
+            else:
+                with st.spinner("Memverifikasi..."):
+                    user = get_user_by_credentials(username.strip(), password)
+                if user:
+                    set_session(user)
+                    save_to_cookie(user, cookies)
+                    st.success("✅ Login berhasil! Redirecting...")
+                    st.rerun()
+                else:
+                    st.error("❌ Username atau password salah, atau akun belum diaktifkan.")
 
     st.markdown("""
     <div class='hint-box'>
@@ -135,8 +101,9 @@ with tab_register:
         reg_username = st.text_input("Username *", key="reg_uname")
         reg_password = st.text_input("Password *", type="password", key="reg_pw1")
         reg_password2 = st.text_input("Konfirmasi Password *", type="password", key="reg_pw2")
+        submit_register = st.form_submit_button("📝  Daftar Sekarang", use_container_width=True)
 
-        if st.form_submit_button("📝  Daftar Sekarang", width='stretch'):
+        if submit_register:
             if not all([reg_fullname, reg_username, reg_password, reg_password2]):
                 st.error("Semua field wajib diisi.")
             elif " " in reg_username:

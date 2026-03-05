@@ -23,7 +23,7 @@ def set_session(user_data: dict):
     st.session_state["username"] = user_data["username"]
     st.session_state["full_name"] = user_data["full_name"]
     st.session_state["role"] = user_data["role"]
-    st.session_state["do_logout"] = False  # ✅ Reset logout flag saat login
+    st.session_state["do_logout"] = False  # ✅ Reset logout flag
 
 
 def save_to_cookie(user: dict, cookies):
@@ -51,31 +51,27 @@ def load_from_cookie(cookies) -> dict | None:
         cookie_data = json.loads(raw)
         expires = datetime.datetime.fromisoformat(cookie_data["expires"])
 
-        # Check if cookie expired
         if datetime.datetime.now() > expires:
             del cookies[COOKIE_KEY]
             cookies.save()
             return None
 
         return cookie_data
-    except Exception as e:
-        # Silent fail - invalid cookie format
+    except Exception:
         return None
 
 
 def logout(cookies):
-    """
-    Complete logout: clear cookie and session state
-    """
+    """Complete logout: clear cookie and session state"""
     # Step 1: Clear cookie
     try:
         if COOKIE_KEY in cookies:
             del cookies[COOKIE_KEY]
             cookies.save()
     except Exception:
-        pass  # Fail silently if cookie already gone
+        pass
 
-    # Step 2: Clear ALL session state (more thorough)
+    # Step 2: Clear ALL session state
     keys_to_clear = list(st.session_state.keys())
     for key in keys_to_clear:
         del st.session_state[key]
@@ -84,4 +80,8 @@ def logout(cookies):
     st.session_state["logged_in"] = False
     st.session_state["do_logout"] = False
 
-    # ✅ No st.rerun() here - let the page handler do it
+
+def redirect_to_login():
+    """Helper function to redirect to login page"""
+    # ✅ Correct path for Streamlit multipage apps
+    st.switch_page("streamlit_app.py")
