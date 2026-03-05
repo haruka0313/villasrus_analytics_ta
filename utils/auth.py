@@ -62,6 +62,7 @@ def load_from_cookie(cookies) -> dict | None:
         return None
 
 def logout(cookies):
+    # 1. Hapus cookie DULU sebelum clear session
     try:
         if COOKIE_KEY in cookies:
             del cookies[COOKIE_KEY]
@@ -69,9 +70,11 @@ def logout(cookies):
     except Exception:
         pass
 
-    for key in list(st.session_state.keys()):
+    # 2. Clear semua session state
+    keys_to_delete = [k for k in st.session_state.keys()]
+    for key in keys_to_delete:
         del st.session_state[key]
 
+    # 3. Set flag redirect — JANGAN set do_logout lagi
     st.session_state["logged_in"] = False
     st.session_state["do_logout"] = False
-    st.session_state["redirect_to_login"] = True

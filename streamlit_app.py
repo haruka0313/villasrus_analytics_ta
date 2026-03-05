@@ -1,3 +1,4 @@
+
 import streamlit as st
 st.cache = st.cache_data  # monkey-patch: fix st.cache deprecated di streamlit-cookies-manager
 # ─────────────────────────────────────────────────────────────────────────────
@@ -34,11 +35,6 @@ if not st.session_state.get("logged_in"):
         set_session(user_data)
         st.switch_page("pages/1_Home.py")
         st.stop()
-
-if st.session_state.get("logged_in"):
-    st.switch_page("pages/1_Home.py")
-    st.stop()
-
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
 def hash_password(pw: str) -> str:

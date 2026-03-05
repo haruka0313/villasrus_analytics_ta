@@ -15,6 +15,7 @@ from utils.sidebar import render_sidebar
 cookies = get_cookie_manager()
 if not cookies.ready():
     st.stop()
+
 # ─── STEP 2: Check Authentication ───────────────────────────────────────────
 if not st.session_state.get("logged_in"):
     user_data = load_from_cookie(cookies)
@@ -25,14 +26,14 @@ if not st.session_state.get("logged_in"):
         st.stop()
 
 # ─── STEP 3: Handle Logout ───────────────────────────────────────────────────
-if st.session_state.get("redirect_to_login"):       # ← TAMBAH INI DULU
+if st.session_state.get("redirect_to_login"):
     st.session_state["redirect_to_login"] = False
     st.switch_page("streamlit_app.py")
     st.stop()
 
 if st.session_state.get("do_logout"):
     logout(cookies)
-    st.rerun()                                       # ← rerun, bukan st.stop()
+    st.switch_page("streamlit_app.py")  # ← tambah ini, ganti st.rerun()
     st.stop()
 
 # ─── STEP 4: Configure Page ─────────────────────────────────────────────────
