@@ -57,51 +57,62 @@ st.markdown("""
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&family=DM+Mono:wght@400;500&display=swap');
 
   html, body, [class*="css"] { font-family: 'Sora', sans-serif; }
+
+  /* Remove all default Streamlit padding/margin at the top */
   .stApp { background: #f0f6ff !important; }
+  .stApp > header { display: none !important; }
   #MainMenu, footer, header { visibility: hidden; }
   [data-testid="stSidebar"] { display: none !important; }
 
-  .auth-wrap {
-    display: flex; flex-direction: column;
-    align-items: center; justify-content: center;
-    min-height: 80vh; padding: 20px;
+  /* Kill the default block container top padding */
+  .block-container {
+    padding-top: 1.5rem !important;
+    padding-bottom: 1rem !important;
+    max-width: 420px !important;
   }
-  .auth-card { text-align: center; margin-bottom: 8px; }
-  .brand-logo  { font-size: 52px; line-height: 1; }
+
+  /* Compact brand header */
+  .auth-card {
+    text-align: center;
+    margin-bottom: 16px;
+  }
+  .brand-logo  { font-size: 40px; line-height: 1; }
   .brand-title {
-    font-size: 28px; font-weight: 700;
-    color: #0f172a; margin: 8px 0 4px;
+    font-size: 24px; font-weight: 700;
+    color: #0f172a; margin: 6px 0 2px;
   }
   .brand-sub {
     font-family: 'DM Mono', monospace;
-    font-size: 10px; letter-spacing: .18em;
+    font-size: 9px; letter-spacing: .18em;
     text-transform: uppercase; color: #94a3b8;
-    margin-bottom: 24px;
+    margin-bottom: 0;
   }
   .hint-box, .reg-info {
     background: #eff6ff; border: 1px solid #bfdbfe;
-    border-radius: 8px; padding: 10px 14px;
-    font-size: 12px; color: #1d4ed8; margin-top: 12px;
+    border-radius: 8px; padding: 8px 12px;
+    font-size: 12px; color: #1d4ed8; margin-top: 10px;
   }
   .reg-info { background: #fafafa; border-color: #e2e8f0; color: #64748b; }
+
+  /* Tighten up Streamlit form elements */
+  div[data-testid="stTextInput"] { margin-bottom: -8px; }
+  div[data-testid="stForm"] { border: none; padding: 0; }
+  .stTabs [data-baseweb="tab-list"] { gap: 4px; }
 </style>
 """, unsafe_allow_html=True)
 
 # ─── UI ──────────────────────────────────────────────────────────────────────
-st.markdown("<div class='auth-wrap'>", unsafe_allow_html=True)
 st.markdown("""
 <div class='auth-card'>
   <div class='brand-logo'>🏝️</div>
   <div class='brand-title'>Villas R Us</div>
-  <div class='brand-sub'>PT BALI CIPTA VILA MANDIRI · ANALYTICS DASHBOARD</div>
+  <div class='brand-sub'>PT Bali Cipta Vila Mandiri · Analytics Dashboard</div>
 </div>
 """, unsafe_allow_html=True)
 
 tab_login, tab_register = st.tabs(["🔐 Login", "📝 Daftar Akun"])
 
 with tab_login:
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
     with st.form("form_login"):
         username = st.text_input("Username", placeholder="Masukkan username", key="login_user")
         password = st.text_input("Password", type="password", placeholder="Masukkan password", key="login_pass")
@@ -153,5 +164,3 @@ with tab_register:
     <div class='reg-info'>
       ℹ️ Akun baru perlu <b>diaktifkan oleh Admin</b> sebelum bisa login.
     </div>""", unsafe_allow_html=True)
-
-st.markdown("</div>", unsafe_allow_html=True)
