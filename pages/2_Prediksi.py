@@ -20,7 +20,7 @@ if not st.session_state.get("logged_in"):
     if user_data:
         set_session(user_data)
     else:
-        st.switch_page("streamlit_app.py")
+        st.switch_page("app.py")
         st.stop()
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
@@ -31,13 +31,13 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# SIDEBAR
+# ─── SIDEBAR ─────────────────────────────────────────────────────────────────
 render_sidebar(cookies)
 
 # ─── LOGOUT HANDLER ──────────────────────────────────────────────────────────
 if st.session_state.get("do_logout"):
     logout(cookies)
-    st.switch_page("streamlit_app.py")
+    st.switch_page("app.py")
     st.stop()
 
 from database import get_occupancy_data, get_financial_data, get_villas
