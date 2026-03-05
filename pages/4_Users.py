@@ -4,7 +4,6 @@ import hashlib
 import pandas as pd
 from database import get_conn, run_query
 
-import extra_streamlit_components as stx
 from utils.auth import get_cookie_manager, set_session, load_from_cookie, logout
 from utils.sidebar import render_sidebar
 
