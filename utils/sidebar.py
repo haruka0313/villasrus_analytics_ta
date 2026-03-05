@@ -1,5 +1,4 @@
 import streamlit as st
-from utils.auth import logout
 
 
 def render_sidebar(cookies):
@@ -16,8 +15,6 @@ def render_sidebar(cookies):
             background:#f0f6ff !important; border-color:#38bdf8 !important;
             color:#0369a1 !important;
           }
-
-          /* Active page highlight */
           section[data-testid="stSidebar"] .nav-active>button {
             background:#eff6ff !important;
             border-color:#38bdf8 !important;
@@ -41,18 +38,14 @@ def render_sidebar(cookies):
             letter-spacing:.08em;text-transform:uppercase;margin-bottom:8px'>
             Navigation</div>""", unsafe_allow_html=True)
 
-        # ── Detect current page untuk highlight aktif ──────────────────────
         try:
             current_page = st.context.headers.get("Referer", "") or ""
         except Exception:
             current_page = ""
 
         def is_active(page_slug: str) -> str:
-            """Return CSS class string jika halaman ini sedang aktif."""
             return "nav-active" if page_slug in current_page else ""
 
-        # ── Menu Items ────────────────────────────────────────────────────
-        # Home
         home_active = is_active("Home") or is_active("home") or (
             not any(p in current_page for p in ["Prediksi","Upload","Users","2_","3_","4_"])
         )
@@ -64,15 +57,12 @@ def render_sidebar(cookies):
             if home_active:
                 st.markdown("</div>", unsafe_allow_html=True)
 
-        # Prediksi SARIMA
         if st.button("🔮  Prediksi SARIMA", width='stretch', key="nav_prediksi"):
             st.switch_page("pages/2_Prediksi.py")
 
-        # Upload Data
         if st.button("📁  Upload Data", width='stretch', key="nav_upload"):
             st.switch_page("pages/3_Upload.py")
 
-        # User Management (admin only)
         if st.session_state.get("role") == "admin":
             if st.button("👥  User Management", width='stretch', key="nav_users"):
                 st.switch_page("pages/4_Users.py")
@@ -80,5 +70,7 @@ def render_sidebar(cookies):
         st.markdown("<hr style='border:none;border-top:1px solid #e2e8f0;margin:16px 0'>",
                     unsafe_allow_html=True)
 
+        # ✅ Logout di dalam with st.sidebar, sejajar dengan tombol lain
         if st.button("🚪  Logout", width='stretch', key="nav_logout"):
-            logout(cookies)
+            st.session_state["do_logout"] = True
+            st.rerun()

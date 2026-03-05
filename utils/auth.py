@@ -54,7 +54,6 @@ def load_from_cookie(cookies) -> dict | None:
     except Exception:
         return None
 
-
 def logout(cookies):
     try:
         if COOKIE_KEY in cookies:
@@ -62,9 +61,7 @@ def logout(cookies):
             cookies.save()
     except Exception:
         pass
-
     for k in ["logged_in", "user_id", "username", "full_name", "role"]:
         st.session_state.pop(k, None)
-
-    # ✅ Ganti st.switch_page("app.py") → st.rerun()
+    st.session_state["do_logout"] = True  # ✅ set flag
     st.rerun()

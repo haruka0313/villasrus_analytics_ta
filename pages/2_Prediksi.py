@@ -9,6 +9,14 @@ import warnings
 warnings.filterwarnings("ignore")
 from utils.auth import get_cookie_manager, set_session, load_from_cookie
 from utils.sidebar import render_sidebar
+render_sidebar(cookies)
+
+# ─── LOGOUT HANDLER ──────────────────────────────────────────────────────────
+if st.session_state.get("do_logout"):
+    from utils.auth import logout
+    logout(cookies)
+    st.switch_page("app.py")
+    st.stop()
 
 # ─── WAJIB DI PALING ATAS ────────────────────────────────────────────────────
 cookies = get_cookie_manager()
