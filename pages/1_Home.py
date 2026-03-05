@@ -700,13 +700,13 @@ st.markdown("<div class='section-label'>Navigasi Cepat</div>", unsafe_allow_html
 nav1, nav2, nav3 = st.columns(3)
 with nav1:
     if st.button("🔮  Prediksi SARIMA Detail", width='stretch'):
-        st.switch_page("pages/1_Prediksi_SARIMA.py")
+        st.switch_page("pages/2_Prediksi.py")
 with nav2:
     if st.button("📤  Upload Data Terbaru", width='stretch'):
         st.switch_page("pages/3_Upload.py")
 with nav3:
     if st.button("👤  Manajemen User", width='stretch'):
-        st.switch_page("pages/4_User_Management.py")
+        st.switch_page("pages/4_Users.py")
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.markdown("""
