@@ -1,19 +1,10 @@
-
 import streamlit as st
-st.cache = st.cache_data  # monkey-patch: fix st.cache deprecated di streamlit-cookies-manager
-# ─────────────────────────────────────────────────────────────────────────────
-
 import hashlib
 from dotenv import load_dotenv
 from database import init_db_once, get_user_by_credentials, run_query
 from utils.auth import get_cookie_manager, set_session, save_to_cookie, load_from_cookie
 
 load_dotenv()
-
-# ─── COOKIE — WAJIB PALING ATAS ──────────────────────────────────────────────
-cookies = get_cookie_manager()
-if not cookies.ready():
-    st.stop()
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -23,9 +14,10 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ─── INIT DB — hanya jalan sekali selama app process hidup ───────────────────
-# Tidak lagi pakai session_state karena cache_resource lebih reliable
-# di Streamlit Cloud (tidak reset setiap session baru)
+# ─── COOKIE ──────────────────────────────────────────────────────────────────
+cookies = get_cookie_manager()
+
+# ─── INIT DB ─────────────────────────────────────────────────────────────────
 init_db_once()
 
 # ─── AUTO-LOGIN ──────────────────────────────────────────────────────────────
@@ -35,6 +27,11 @@ if not st.session_state.get("logged_in"):
         set_session(user_data)
         st.switch_page("pages/1_Home.py")
         st.stop()
+
+if st.session_state.get("logged_in"):
+    st.switch_page("pages/1_Home.py")
+    st.stop()
+
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────
 def hash_password(pw: str) -> str:
@@ -69,9 +66,7 @@ st.markdown("""
     align-items: center; justify-content: center;
     min-height: 80vh; padding: 20px;
   }
-  .auth-card {
-    text-align: center; margin-bottom: 8px;
-  }
+  .auth-card { text-align: center; margin-bottom: 8px; }
   .brand-logo  { font-size: 52px; line-height: 1; }
   .brand-title {
     font-size: 28px; font-weight: 700;

@@ -1,4 +1,5 @@
 import streamlit as st
+from utils.auth import logout
 
 def render_sidebar(cookies):
     """Render sidebar with navigation and logout button"""
@@ -17,7 +18,11 @@ def render_sidebar(cookies):
         """, unsafe_allow_html=True)
 
         # Navigation menu
-        st.markdown("<div style='font-size:11px;font-weight:700;color:#94a3b8;letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px'>Menu</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:11px;font-weight:700;color:#94a3b8;"
+            "letter-spacing:.12em;text-transform:uppercase;margin-bottom:10px'>Menu</div>",
+            unsafe_allow_html=True
+        )
 
         if st.button("🏠 Dashboard", use_container_width=True, key="nav_dashboard"):
             st.switch_page("pages/1_Home.py")
@@ -28,14 +33,13 @@ def render_sidebar(cookies):
         if st.button("📤 Upload Data", use_container_width=True, key="nav_upload"):
             st.switch_page("pages/3_Upload.py")
 
-        # Admin-only menu
         if st.session_state.get("role") == "admin":
             if st.button("👥 User Management", use_container_width=True, key="nav_users"):
                 st.switch_page("pages/4_Users.py")
 
         st.markdown("<hr style='border:none;border-top:1px solid #e2e8f0;margin:16px 0'>", unsafe_allow_html=True)
 
-        # ✅ Logout button - only sets flag, doesn't call logout directly
+        # ─── LOGOUT — langsung panggil logout(), tidak pakai flag ────────────
         if st.button("🚪 Logout", use_container_width=True, key="btn_logout", type="primary"):
-            st.session_state["do_logout"] = True
-            st.rerun()  # Force immediate rerun to trigger logout handler
+            logout(cookies)  # logout() sudah handle switch_page ke login
+            st.stop()

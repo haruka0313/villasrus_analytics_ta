@@ -3,10 +3,10 @@ pandas
 numpy
 plotly
 python-dotenv
-streamlit-cookies-manager
+extra-streamlit-components
 mysql-connector-python
-cryptography
 scikit-learn
 statsmodels
 pmdarima
 joblib
+cryptography

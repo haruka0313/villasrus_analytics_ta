@@ -1,7 +1,4 @@
-# ─── BARIS 1-2 WAJIB SEPERTI INI ─────────────────────────────────────────────
 import streamlit as st
-st.cache = st.cache_data  # ← HARUS sebelum utils.auth diimport
-
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -10,16 +7,13 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-# ← baru boleh import utils.auth setelah patch di atas
 from utils.auth import get_cookie_manager, set_session, load_from_cookie, logout
 from utils.sidebar import render_sidebar
 
-# ─── STEP 1: Initialize Cookies (MUST BE FIRST) ─────────────────────────────
+# ─── COOKIES ─────────────────────────────────────────────────────────────────
 cookies = get_cookie_manager()
-if not cookies.ready():
-    st.stop()
 
-# ─── STEP 2: Check Authentication ───────────────────────────────────────────
+# ─── AUTH CHECK ──────────────────────────────────────────────────────────────
 if not st.session_state.get("logged_in"):
     user_data = load_from_cookie(cookies)
     if user_data:
@@ -28,18 +22,12 @@ if not st.session_state.get("logged_in"):
         st.switch_page("streamlit_app.py")
         st.stop()
 
-# ─── STEP 3: Handle Logout ───────────────────────────────────────────────────
-if st.session_state.get("redirect_to_login"):
-    st.session_state["redirect_to_login"] = False
-    st.switch_page("streamlit_app.py")
-    st.stop()
-
+# ─── LOGOUT HANDLER ──────────────────────────────────────────────────────────
 if st.session_state.get("do_logout"):
     logout(cookies)
-    st.switch_page("streamlit_app.py")  # ← tambah ini, ganti st.rerun()
     st.stop()
 
-# ─── STEP 4: Configure Page ─────────────────────────────────────────────────
+# ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Dashboard — Villas R Us",
     page_icon="🏝",
@@ -47,7 +35,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ─── STEP 5: Render Sidebar ─────────────────────────────────────────────────
+# ─── RENDER SIDEBAR ──────────────────────────────────────────────────────────
 render_sidebar(cookies)
 
 from database import get_occupancy_data, get_financial_data, get_villas

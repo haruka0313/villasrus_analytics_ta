@@ -1,43 +1,57 @@
 import json
 import datetime
 import streamlit as st
-from streamlit_cookies_manager import EncryptedCookieManager
 
-COOKIE_KEY = "auth_data"
-COOKIE_EXPIRE_HOURS = 24        # ← ganti dari hari ke jam
-COOKIE_PASSWORD = "vru-secret-key-ganti-ini-32chars!!"
-LOGIN_PAGE = "streamlit_app.py"  # ← satu tempat, gampang ganti
+COOKIE_KEY  = "vru_auth"
+EXPIRE_HOURS = 24
+LOGIN_PAGE   = "streamlit_app.py"
+
+# ── lazy import agar tidak crash sebelum patch ────────────────────────────────
+def _get_manager():
+    import extra_streamlit_components as stx
+    return stx.CookieManager(key="vru_cookie_mgr")
 
 
 def get_cookie_manager():
-    return EncryptedCookieManager(
-        prefix="vru_",
-        password=COOKIE_PASSWORD,
-    )
+    """Kembalikan cookie manager. Panggil di paling atas setiap page."""
+    return _get_manager()
+
+
+# extra-streamlit-components tidak punya .ready() — selalu return True
+class _FakeReady:
+    def ready(self):
+        return True
+
+def get_cookie_manager():
+    mgr = _get_manager()
+    mgr.ready = lambda: True   # compat shim
+    return mgr
 
 
 def set_session(user_data: dict):
-    st.session_state["logged_in"] = True
-    st.session_state["user_id"] = user_data.get("user_id") or user_data.get("id")
-    st.session_state["username"] = user_data["username"]
-    st.session_state["full_name"] = user_data["full_name"]
-    st.session_state["role"] = user_data["role"]
-    st.session_state["do_logout"] = False
+    st.session_state["logged_in"]  = True
+    st.session_state["user_id"]    = user_data.get("user_id") or user_data.get("id")
+    st.session_state["username"]   = user_data["username"]
+    st.session_state["full_name"]  = user_data["full_name"]
+    st.session_state["role"]       = user_data["role"]
+    st.session_state["do_logout"]  = False
 
 
 def save_to_cookie(user: dict, cookies):
-    cookie_data = {
-        "user_id": user.get("id") or user.get("user_id"),
-        "username": user["username"],
+    payload = {
+        "user_id":   user.get("id") or user.get("user_id"),
+        "username":  user["username"],
         "full_name": user["full_name"],
-        "role": user["role"],
-        "expires": (
-            datetime.datetime.now()
-            + datetime.timedelta(hours=COOKIE_EXPIRE_HOURS)  # ← 24 jam
+        "role":      user["role"],
+        "expires":   (
+            datetime.datetime.now() + datetime.timedelta(hours=EXPIRE_HOURS)
         ).isoformat(),
     }
-    cookies[COOKIE_KEY] = json.dumps(cookie_data)
-    cookies.save()
+    try:
+        cookies.set(COOKIE_KEY, json.dumps(payload),
+                    expires_at=datetime.datetime.now() + datetime.timedelta(hours=EXPIRE_HOURS))
+    except Exception:
+        pass
 
 
 def load_from_cookie(cookies) -> dict | None:
@@ -45,36 +59,31 @@ def load_from_cookie(cookies) -> dict | None:
         raw = cookies.get(COOKIE_KEY)
         if not raw:
             return None
-
-        cookie_data = json.loads(raw)
-        expires = datetime.datetime.fromisoformat(cookie_data["expires"])
-
+        data    = json.loads(raw)
+        expires = datetime.datetime.fromisoformat(data["expires"])
         if datetime.datetime.now() > expires:
-            try:
-                del cookies[COOKIE_KEY]
-                cookies.save()
-            except Exception:
-                pass
+            _delete_cookie(cookies)
             return None
-
-        return cookie_data
+        return data
     except Exception:
         return None
 
-def logout(cookies):
-    # 1. Hapus cookie DULU sebelum clear session
+
+def _delete_cookie(cookies):
     try:
-        if COOKIE_KEY in cookies:
-            del cookies[COOKIE_KEY]
-            cookies.save()
+        cookies.delete(COOKIE_KEY)
     except Exception:
         pass
 
-    # 2. Clear semua session state
-    keys_to_delete = [k for k in st.session_state.keys()]
-    for key in keys_to_delete:
-        del st.session_state[key]
 
-    # 3. Set flag redirect — JANGAN set do_logout lagi
+def logout(cookies):
+    """Hapus cookie + bersihkan session, lalu redirect ke login."""
+    _delete_cookie(cookies)
+
+    keys = list(st.session_state.keys())
+    for k in keys:
+        del st.session_state[k]
+
     st.session_state["logged_in"] = False
     st.session_state["do_logout"] = False
+    st.switch_page(LOGIN_PAGE)
