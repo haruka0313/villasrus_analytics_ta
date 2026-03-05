@@ -1,5 +1,6 @@
-@"
-import shutil, site, os
+import shutil
+import site
+import os
 
 src = os.path.join(os.path.dirname(__file__), "patches", "encrypted_cookie_manager.py")
 
@@ -9,4 +10,3 @@ for sp in site.getsitepackages():
         shutil.copy(src, dst)
         print(f"Patched: {dst}")
         break
-"@ | Set-Content apply_patch.py
