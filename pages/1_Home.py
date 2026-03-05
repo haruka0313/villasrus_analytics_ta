@@ -1,7 +1,6 @@
-# ─── PATCH WAJIB PALING ATAS ─────────────────────────────────────────────────
+# ─── BARIS 1-2 WAJIB SEPERTI INI ─────────────────────────────────────────────
 import streamlit as st
-st.cache = st.cache_data  # fix st.cache deprecated di streamlit-cookies-manager
-# ─────────────────────────────────────────────────────────────────────────────
+st.cache = st.cache_data  # ← HARUS sebelum utils.auth diimport
 
 import pandas as pd
 import numpy as np
@@ -10,6 +9,8 @@ from plotly.subplots import make_subplots
 import warnings
 
 warnings.filterwarnings("ignore")
+
+# ← baru boleh import utils.auth setelah patch di atas
 from utils.auth import get_cookie_manager, set_session, load_from_cookie, logout
 from utils.sidebar import render_sidebar
 
