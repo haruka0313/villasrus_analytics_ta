@@ -49,11 +49,11 @@ if not st.session_state.get("logged_in"):
     user_data = load_from_cookie(cookies)
     if user_data:
         set_session(user_data)
-        st.switch_page("pages/2_Dashboard.py")  # ✅ Redirect ke Dashboard
+        st.switch_page("pages/1_Home.py")
         st.stop()
 
 if st.session_state.get("logged_in"):
-    st.switch_page("pages/2_Dashboard.py")  # ✅ Redirect ke Dashboard
+    st.switch_page("pages/1_Home.py")
     st.stop()
 
 # ─── UI LOGIN ────────────────────────────────────────────────────────────────
