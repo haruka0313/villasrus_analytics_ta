@@ -85,14 +85,9 @@ def _clear_auth_cookie(cookies):
 def logout(cookies):
     _clear_auth_cookie(cookies)
 
-    try:
-        cookies[COOKIE_LOGOUT_FLAG] = "1"
-        cookies.save()
-    except Exception:
-        pass
-
     for key in list(st.session_state.keys()):
         del st.session_state[key]
 
     st.session_state["logged_in"] = False
-    st.switch_page(LOGIN_PAGE)
+    # Kirim flag lewat query param
+    st.switch_page(LOGIN_PAGE + "?logged_out=1")

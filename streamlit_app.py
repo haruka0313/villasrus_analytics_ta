@@ -15,27 +15,15 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ─── COOKIE MANAGER ──────────────────────────────────────────────────────────
-cookies = get_cookie_manager()  # st.stop() otomatis kalau belum ready
-
-# ─── DEBUG SEMENTARA ─────────────────────────────────────────────────────────
-
-st.write("🍪 DEBUG COOKIES:")
-try:
-    all_cookies = cookies.getAll() if hasattr(cookies, 'getAll') else {}
-    st.write(f"logout_flag: `{cookies.get('logout_flag')}`")
-    st.write(f"auth cookie: `{cookies.get('auth')}`")
-    st.write(f"session logged_in: `{st.session_state.get('logged_in')}`")
-except Exception as e:
-    st.write(f"Error baca cookie: {e}")
-# ─── END DEBUG ────────────────────────────────────────────────────────────────
-
-# ─── INIT DB ─────────────────────────────────────────────────────────────────
+cookies = get_cookie_manager()
 init_db_once()
 
-# ─── AUTO-LOGIN ──────────────────────────────────────────────────────────────
-# load_from_cookie() sudah handle flag logout di dalamnya
-if not st.session_state.get("logged_in"):
+# Cek query param — kalau baru logout, skip auto-login
+just_logged_out = st.query_params.get("logged_out") == "1"
+if just_logged_out:
+    st.query_params.clear()  # bersihkan URL
+
+elif not st.session_state.get("logged_in"):
     user_data = load_from_cookie(cookies)
     if user_data:
         set_session(user_data)

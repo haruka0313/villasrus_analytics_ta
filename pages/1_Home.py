@@ -359,7 +359,6 @@ best_month = max(month_avgs, key=month_avgs.get)
 # ══════════════════════════════════════════════════════════════════════════════
 # HERO SECTION
 # ══════════════════════════════════════════════════════════════════════════════
-import datetime
 hour = datetime.datetime.now().hour
 greeting = "Selamat Pagi" if hour < 12 else "Selamat Siang" if hour < 17 else "Selamat Malam"
 username = st.session_state.get("username", "Administrator")
