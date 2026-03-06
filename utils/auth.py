@@ -3,12 +3,10 @@ import datetime
 import streamlit as st
 from streamlit_cookies_manager import EncryptedCookieManager
 
-COOKIE_PREFIX      = "vru_"
-COOKIE_KEY         = "auth"
-COOKIE_LOGOUT_FLAG = "logout_flag"
-EXPIRE_HOURS       = 24
-LOGIN_PAGE         = "streamlit_app.py"
-COOKIE_SECRET      = "4056875343"
+COOKIE_PREFIX  = "vru_"
+COOKIE_KEY     = "auth"
+EXPIRE_HOURS   = 24
+COOKIE_SECRET  = "4056875343"
 
 
 def get_cookie_manager():
@@ -27,7 +25,6 @@ def set_session(user_data: dict):
     st.session_state["username"]  = user_data["username"]
     st.session_state["full_name"] = user_data["full_name"]
     st.session_state["role"]      = user_data["role"]
-    st.session_state["do_logout"] = False
 
 
 def save_to_cookie(user: dict, cookies):
@@ -46,36 +43,23 @@ def save_to_cookie(user: dict, cookies):
     except Exception:
         pass
 
-def load_from_cookie(cookies) -> dict | None:
-    try:
-        flag = cookies.get(COOKIE_LOGOUT_FLAG)
-        if flag == "1":
-            # Reset flag
-            try:
-                cookies[COOKIE_LOGOUT_FLAG] = "0"
-                cookies[COOKIE_KEY] = ""
-                cookies.save()
-            except Exception:
-                pass
-            return None  # BLOKIR auto-login
-    except Exception:
-        pass
 
+def load_from_cookie(cookies) -> dict | None:
     try:
         raw = cookies.get(COOKIE_KEY)
         if not raw or raw.strip() in ("", '""', "null"):
             return None
         data = json.loads(raw)
+        if not data.get("username"):
+            return None
         expires = datetime.datetime.fromisoformat(data["expires"])
         if datetime.datetime.now() > expires:
             _clear_auth_cookie(cookies)
             return None
-        # Validasi minimal field ada
-        if not data.get("username"):
-            return None
         return data
     except Exception:
         return None
+
 
 def _clear_auth_cookie(cookies):
     try:
@@ -84,17 +68,19 @@ def _clear_auth_cookie(cookies):
     except Exception:
         pass
 
+
 def logout(cookies):
-    # Hapus cookie (best effort, tidak masalah kalau gagal)
+    # 1. Hapus cookie (best effort)
     try:
         cookies[COOKIE_KEY] = ""
-        cookies[COOKIE_LOGOUT_FLAG] = "1"
         cookies.save()
     except Exception:
         pass
 
-    # Clear session state SEPENUHNYA
+    # 2. Clear session, tapi sisakan flag logout
     st.session_state.clear()
+    st.session_state["just_logged_out"] = True
 
-    # Pakai query param sebagai sinyal logout yang 100% reliable
+    # 3. Pindah ke login — flag di session_state PASTI terbaca
+    #    karena session_state persist antar switch_page
     st.switch_page("streamlit_app.py")
