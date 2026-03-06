@@ -43,7 +43,37 @@ def save_to_cookie(user: dict, cookies):
     cookies.save()
 
 
+def _delete_cookie(cookies):
+    """
+    Overwrite dengan string kosong + save.
+    Lebih reliable daripada cookies.delete() di streamlit-cookies-manager.
+    """
+    try:
+        cookies[COOKIE_KEY] = ""
+        cookies.save()
+    except Exception:
+        pass
+
+def logout(cookies):
+    """Hapus cookie, bersihkan session, redirect ke login."""
+    _delete_cookie(cookies)
+
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+
+    # Flag khusus — mencegah auto-login saat cookie belum ter-clear
+    st.session_state["logged_in"]    = False
+    st.session_state["do_logout"]    = False
+    st.session_state["just_logged_out"] = True  # ← tambahkan ini
+
+    st.switch_page(LOGIN_PAGE)
+
+
 def load_from_cookie(cookies) -> dict | None:
+    # Kalau baru saja logout, jangan baca cookie dulu
+    if st.session_state.get("just_logged_out"):
+        return None
+
     try:
         raw = cookies.get(COOKIE_KEY)
         if not raw or raw.strip() == "":
@@ -56,26 +86,3 @@ def load_from_cookie(cookies) -> dict | None:
         return data
     except Exception:
         return None
-
-
-def _delete_cookie(cookies):
-    """
-    Overwrite dengan string kosong + save.
-    Lebih reliable daripada cookies.delete() di streamlit-cookies-manager.
-    """
-    try:
-        cookies[COOKIE_KEY] = ""
-        cookies.save()
-    except Exception:
-        pass
-
-
-def logout(cookies):
-    """Hapus cookie, bersihkan session, set flag redirect."""
-    _delete_cookie(cookies)
-
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-
-    st.session_state["logged_in"] = False
-    st.session_state["do_logout"] = True  # flag untuk trigger redirect

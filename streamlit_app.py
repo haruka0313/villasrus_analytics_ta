@@ -14,21 +14,27 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ─── COOKIE — setelah set_page_config ────────────────────────────────────────
-cookies = get_cookie_manager()  # st.stop() otomatis kalau belum ready
+cookies = get_cookie_manager()
 
 # ─── INIT DB ─────────────────────────────────────────────────────────────────
 init_db_once()
 
+# ─── HANDLE JUST LOGGED OUT ──────────────────────────────────────────────────
+# Kalau baru logout, tampilkan halaman login — jangan auto-login
+if st.session_state.get("just_logged_out"):
+    st.session_state["just_logged_out"] = False  # reset flag
+    # Lanjut tampilkan halaman login — jangan switch page
+    pass
+
 # ─── AUTO-LOGIN ──────────────────────────────────────────────────────────────
-if not st.session_state.get("logged_in"):
+elif not st.session_state.get("logged_in"):
     user_data = load_from_cookie(cookies)
     if user_data:
         set_session(user_data)
         st.switch_page("pages/1_Home.py")
         st.stop()
 
-if st.session_state.get("logged_in"):
+elif st.session_state.get("logged_in"):
     st.switch_page("pages/1_Home.py")
     st.stop()
 
