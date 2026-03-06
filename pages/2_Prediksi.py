@@ -10,10 +10,17 @@ warnings.filterwarnings("ignore")
 from utils.auth import get_cookie_manager, set_session, load_from_cookie
 from utils.sidebar import render_sidebar
 
-cookies = get_cookie_manager()  # ← cookies diinit PERTAMA
+cookies = get_cookie_manager()
 
+# ─── AUTH CHECK ──────────────────────────────────────────────────────────────
 if not st.session_state.get("logged_in"):
-    user_data = load_from_cookie(cookies)  # ← langsung cek cookie
+    user_data = load_from_cookie(cookies)
+    if user_data:
+        set_session(user_data)
+        st.rerun()  # ← rerun supaya session ter-set sebelum render
+    else:
+        st.switch_page("streamlit_app.py")
+        st.stop()
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
