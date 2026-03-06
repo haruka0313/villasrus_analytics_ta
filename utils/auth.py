@@ -1,40 +1,32 @@
 import json
 import datetime
 import streamlit as st
+from streamlit_cookies_manager import EncryptedCookieManager
 
-COOKIE_KEY  = "vru_auth"
-EXPIRE_HOURS = 24
-LOGIN_PAGE   = "streamlit_app.py"
-
-# ── lazy import agar tidak crash sebelum patch ────────────────────────────────
-def _get_manager():
-    import extra_streamlit_components as stx
-    return stx.CookieManager(key="vru_cookie_mgr")
+COOKIE_PREFIX  = "vru_"
+COOKIE_KEY     = "auth"
+EXPIRE_HOURS   = 24
+LOGIN_PAGE     = "streamlit_app.py"
+COOKIE_SECRET  = "ganti_dengan_string_panjang_random_minimal_32_karakter"
 
 
 def get_cookie_manager():
-    """Kembalikan cookie manager. Panggil di paling atas setiap page."""
-    return _get_manager()
-
-
-# extra-streamlit-components tidak punya .ready() — selalu return True
-class _FakeReady:
-    def ready(self):
-        return True
-
-def get_cookie_manager():
-    mgr = _get_manager()
-    mgr.ready = lambda: True   # compat shim
-    return mgr
+    cookies = EncryptedCookieManager(
+        prefix=COOKIE_PREFIX,
+        password=COOKIE_SECRET,
+    )
+    if not cookies.ready():
+        st.stop()  # tunggu render cycle, Streamlit auto re-run
+    return cookies
 
 
 def set_session(user_data: dict):
-    st.session_state["logged_in"]  = True
-    st.session_state["user_id"]    = user_data.get("user_id") or user_data.get("id")
-    st.session_state["username"]   = user_data["username"]
-    st.session_state["full_name"]  = user_data["full_name"]
-    st.session_state["role"]       = user_data["role"]
-    st.session_state["do_logout"]  = False
+    st.session_state["logged_in"] = True
+    st.session_state["user_id"]   = user_data.get("user_id") or user_data.get("id")
+    st.session_state["username"]  = user_data["username"]
+    st.session_state["full_name"] = user_data["full_name"]
+    st.session_state["role"]      = user_data["role"]
+    st.session_state["do_logout"] = False
 
 
 def save_to_cookie(user: dict, cookies):
@@ -47,21 +39,14 @@ def save_to_cookie(user: dict, cookies):
             datetime.datetime.now() + datetime.timedelta(hours=EXPIRE_HOURS)
         ).isoformat(),
     }
-    try:
-        cookies.set(COOKIE_KEY, json.dumps(payload),
-                    expires_at=datetime.datetime.now() + datetime.timedelta(hours=EXPIRE_HOURS))
-    except Exception:
-        pass
+    cookies[COOKIE_KEY] = json.dumps(payload)
+    cookies.save()
 
 
 def load_from_cookie(cookies) -> dict | None:
     try:
-        if not st.session_state.get("_cookie_checked"):
-            st.session_state["_cookie_checked"] = True
-            st.rerun()
-
         raw = cookies.get(COOKIE_KEY)
-        if not raw:
+        if not raw or raw.strip() == "":
             return None
         data    = json.loads(raw)
         expires = datetime.datetime.fromisoformat(data["expires"])
@@ -74,20 +59,26 @@ def load_from_cookie(cookies) -> dict | None:
 
 
 def _delete_cookie(cookies):
+    """
+    Overwrite dengan string kosong + save.
+    Lebih reliable daripada cookies.delete() di streamlit-cookies-manager.
+    """
     try:
-        cookies.delete(COOKIE_KEY)
+        cookies[COOKIE_KEY] = ""
+        cookies.save()
     except Exception:
         pass
 
 
 def logout(cookies):
-    """Hapus cookie + bersihkan session, lalu redirect ke login."""
+    """Hapus cookie, bersihkan session, redirect ke login."""
     _delete_cookie(cookies)
 
-    keys = list(st.session_state.keys())
-    for k in keys:
-        del st.session_state[k]
+    # Bersihkan semua session state
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
 
     st.session_state["logged_in"] = False
     st.session_state["do_logout"] = False
+
     st.switch_page(LOGIN_PAGE)

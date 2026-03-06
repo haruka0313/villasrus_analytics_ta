@@ -12,12 +12,7 @@ from utils.auth import get_cookie_manager, set_session, load_from_cookie, logout
 from utils.sidebar import render_sidebar
 
 # ─── COOKIES ─────────────────────────────────────────────────────────────────
-cookies = get_cookie_manager()
-
-# Reset flag setiap kali page load
-if "page_loaded" not in st.session_state:
-    st.session_state["page_loaded"] = True
-    st.session_state["_cookie_checked"] = False
+cookies = get_cookie_manager()  # kalau belum ready, st.stop() otomatis di dalam fungsi
 
 # ─── AUTH CHECK ──────────────────────────────────────────────────────────────
 if not st.session_state.get("logged_in"):
@@ -28,10 +23,6 @@ if not st.session_state.get("logged_in"):
         st.switch_page("streamlit_app.py")
         st.stop()
 
-# ─── LOGOUT HANDLER ──────────────────────────────────────────────────────────
-if st.session_state.get("do_logout"):
-    logout(cookies)
-    st.stop()
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(

@@ -3,7 +3,7 @@ pandas
 numpy
 plotly
 python-dotenv
-extra-streamlit-components
+streamlit-cookies-manager
 mysql-connector-python
 scikit-learn
 statsmodels
