@@ -43,5 +43,5 @@ def render_sidebar(cookies):
 
         # ─── LOGOUT ──────────────────────────────────────────────────────────
         if st.button("🚪 Logout", use_container_width=True, key="btn_logout", type="primary"):
-            logout(cookies)
-            st.stop()
+            logout(cookies)  # logout sudah include switch_page
+            st.stop()        # ini sebagai safety net

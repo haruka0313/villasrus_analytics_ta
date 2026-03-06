@@ -13,11 +13,6 @@ from utils.sidebar import render_sidebar
 
 cookies = get_cookie_manager()
 
-# ─── FORCE LOGOUT HANDLER ────────────────────────────────────────────────────
-if st.session_state.get("force_logout"):
-    st.session_state.clear()
-    st.switch_page("streamlit_app.py")
-    st.stop()
 
 # ─── AUTH CHECK ──────────────────────────────────────────────────────────────
 if not st.session_state.get("logged_in"):

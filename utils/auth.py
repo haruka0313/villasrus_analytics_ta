@@ -84,9 +84,15 @@ def _clear_auth_cookie(cookies):
 def logout(cookies):
     _clear_auth_cookie(cookies)
 
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
+    # Set logout flag di cookie supaya auto-login skip
+    try:
+        cookies[COOKIE_LOGOUT_FLAG] = "1"
+        cookies.save()
+    except Exception:
+        pass
 
-    st.session_state["logged_in"]    = False
-    st.session_state["force_logout"] = True
-    st.rerun()  # rerun page yang sama, force_logout handler akan switch ke login
+    # Clear session state sepenuhnya
+    st.session_state.clear()
+
+    # Langsung pindah ke login page — TANPA st.rerun()
+    st.switch_page("streamlit_app.py")
