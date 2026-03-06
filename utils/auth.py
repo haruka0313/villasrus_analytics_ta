@@ -46,17 +46,14 @@ def save_to_cookie(user: dict, cookies):
     except Exception:
         pass
 
-
 def load_from_cookie(cookies) -> dict | None:
+    # Cek logout flag PERTAMA, sebelum apapun
     try:
-        logout_flag = cookies.get(COOKIE_LOGOUT_FLAG)
-        if logout_flag == "1":
-            try:
-                cookies[COOKIE_LOGOUT_FLAG] = ""
-                cookies.save()
-            except Exception:
-                pass
-            return None
+        if cookies.get(COOKIE_LOGOUT_FLAG) == "1":
+            cookies[COOKIE_LOGOUT_FLAG] = ""
+            cookies[COOKIE_KEY] = ""
+            cookies.save()
+            return None  # ← stop di sini, jangan lanjut
     except Exception:
         pass
 
@@ -73,7 +70,6 @@ def load_from_cookie(cookies) -> dict | None:
     except Exception:
         return None
 
-
 def _clear_auth_cookie(cookies):
     try:
         cookies[COOKIE_KEY] = ""
@@ -82,17 +78,16 @@ def _clear_auth_cookie(cookies):
         pass
 
 def logout(cookies):
-    _clear_auth_cookie(cookies)
-
-    # Set logout flag di cookie supaya auto-login skip
+    # 1. Set flag dulu SEBELUM hapus auth cookie
     try:
         cookies[COOKIE_LOGOUT_FLAG] = "1"
+        cookies[COOKIE_KEY] = ""
         cookies.save()
     except Exception:
         pass
 
-    # Clear session state sepenuhnya
+    # 2. Clear session
     st.session_state.clear()
 
-    # Langsung pindah ke login page — TANPA st.rerun()
+    # 3. Langsung switch — TANPA rerun()
     st.switch_page("streamlit_app.py")
