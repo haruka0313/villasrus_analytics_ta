@@ -81,7 +81,6 @@ def _clear_auth_cookie(cookies):
     except Exception:
         pass
 
-
 def logout(cookies):
     _clear_auth_cookie(cookies)
 
@@ -89,5 +88,7 @@ def logout(cookies):
         del st.session_state[key]
 
     st.session_state["logged_in"] = False
-    # Kirim flag lewat query param
-    st.switch_page(LOGIN_PAGE + "?logged_out=1")
+
+    # Set query param dulu, baru switch page
+    st.query_params["logged_out"] = "1"
+    st.switch_page(LOGIN_PAGE)
