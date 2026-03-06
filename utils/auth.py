@@ -3,11 +3,12 @@ import datetime
 import streamlit as st
 from streamlit_cookies_manager import EncryptedCookieManager
 
-COOKIE_PREFIX  = "vru_"
-COOKIE_KEY     = "auth"
-EXPIRE_HOURS   = 24
-LOGIN_PAGE     = "streamlit_app.py"
-COOKIE_SECRET  = "ganti_dengan_string_panjang_random_minimal_32_karakter"
+COOKIE_PREFIX      = "vru_"
+COOKIE_KEY         = "auth"
+COOKIE_LOGOUT_FLAG = "logout_flag"
+EXPIRE_HOURS       = 24
+LOGIN_PAGE         = "streamlit_app.py"
+COOKIE_SECRET      = "0585487510"
 
 
 def get_cookie_manager():
@@ -16,7 +17,7 @@ def get_cookie_manager():
         password=COOKIE_SECRET,
     )
     if not cookies.ready():
-        st.stop()  # tunggu render cycle, Streamlit auto re-run
+        st.stop()
     return cookies
 
 
@@ -39,40 +40,28 @@ def save_to_cookie(user: dict, cookies):
             datetime.datetime.now() + datetime.timedelta(hours=EXPIRE_HOURS)
         ).isoformat(),
     }
-    cookies[COOKIE_KEY] = json.dumps(payload)
-    cookies.save()
-
-
-def _delete_cookie(cookies):
-    """
-    Overwrite dengan string kosong + save.
-    Lebih reliable daripada cookies.delete() di streamlit-cookies-manager.
-    """
     try:
-        cookies[COOKIE_KEY] = ""
+        cookies[COOKIE_KEY] = json.dumps(payload)
         cookies.save()
     except Exception:
         pass
 
-def logout(cookies):
-    """Hapus cookie, bersihkan session, redirect ke login."""
-    _delete_cookie(cookies)
-
-    for key in list(st.session_state.keys()):
-        del st.session_state[key]
-
-    # Flag khusus — mencegah auto-login saat cookie belum ter-clear
-    st.session_state["logged_in"]    = False
-    st.session_state["do_logout"]    = False
-    st.session_state["just_logged_out"] = True  # ← tambahkan ini
-
-    st.switch_page(LOGIN_PAGE)
-
 
 def load_from_cookie(cookies) -> dict | None:
-    # Kalau baru saja logout, jangan baca cookie dulu
-    if st.session_state.get("just_logged_out"):
-        return None
+    """Baca cookie auth — return None kalau baru logout atau cookie invalid."""
+    try:
+        # Cek flag logout dulu — kalau ada, skip auto-login
+        logout_flag = cookies.get(COOKIE_LOGOUT_FLAG)
+        if logout_flag == "1":
+            # Hapus flag agar next visit bisa login normal
+            try:
+                cookies[COOKIE_LOGOUT_FLAG] = ""
+                cookies.save()
+            except Exception:
+                pass
+            return None
+    except Exception:
+        pass
 
     try:
         raw = cookies.get(COOKIE_KEY)
@@ -81,8 +70,43 @@ def load_from_cookie(cookies) -> dict | None:
         data    = json.loads(raw)
         expires = datetime.datetime.fromisoformat(data["expires"])
         if datetime.datetime.now() > expires:
-            _delete_cookie(cookies)
+            _clear_auth_cookie(cookies)
             return None
         return data
     except Exception:
         return None
+
+
+def _clear_auth_cookie(cookies):
+    """Overwrite cookie auth dengan string kosong."""
+    try:
+        cookies[COOKIE_KEY] = ""
+        cookies.save()
+    except Exception:
+        pass
+
+
+def logout(cookies):
+    """
+    1. Overwrite cookie auth dengan string kosong
+    2. Set flag logout di cookie — bertahan saat switch page
+    3. Bersihkan session state
+    4. Redirect ke login
+    """
+    # Hapus cookie auth
+    _clear_auth_cookie(cookies)
+
+    # Set flag logout di cookie — ini yang mencegah auto-login
+    try:
+        cookies[COOKIE_LOGOUT_FLAG] = "1"
+        cookies.save()
+    except Exception:
+        pass
+
+    # Bersihkan session state
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+
+    st.session_state["logged_in"] = False
+
+    st.switch_page(LOGIN_PAGE)

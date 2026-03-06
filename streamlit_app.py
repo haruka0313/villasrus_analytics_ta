@@ -6,7 +6,7 @@ from utils.auth import get_cookie_manager, set_session, save_to_cookie, load_fro
 
 load_dotenv()
 
-# ─── PAGE CONFIG — harus PERTAMA sebelum widget apapun ───────────────────────
+# ─── PAGE CONFIG — harus pertama ─────────────────────────────────────────────
 st.set_page_config(
     page_title="Villas R Us · Login",
     page_icon="🏝️",
@@ -14,27 +14,22 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-cookies = get_cookie_manager()
+# ─── COOKIE MANAGER ──────────────────────────────────────────────────────────
+cookies = get_cookie_manager()  # st.stop() otomatis kalau belum ready
 
 # ─── INIT DB ─────────────────────────────────────────────────────────────────
 init_db_once()
 
-# ─── HANDLE JUST LOGGED OUT ──────────────────────────────────────────────────
-# Kalau baru logout, tampilkan halaman login — jangan auto-login
-if st.session_state.get("just_logged_out"):
-    st.session_state["just_logged_out"] = False  # reset flag
-    # Lanjut tampilkan halaman login — jangan switch page
-    pass
-
 # ─── AUTO-LOGIN ──────────────────────────────────────────────────────────────
-elif not st.session_state.get("logged_in"):
+# load_from_cookie() sudah handle flag logout di dalamnya
+if not st.session_state.get("logged_in"):
     user_data = load_from_cookie(cookies)
     if user_data:
         set_session(user_data)
         st.switch_page("pages/1_Home.py")
         st.stop()
 
-elif st.session_state.get("logged_in"):
+if st.session_state.get("logged_in"):
     st.switch_page("pages/1_Home.py")
     st.stop()
 
@@ -61,37 +56,23 @@ def register_user(username, full_name, password):
 st.markdown("""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700&family=DM+Mono:wght@400;500&display=swap');
-
   html, body, [class*="css"] { font-family: 'Sora', sans-serif; }
-
-  /* Remove all default Streamlit padding/margin at the top */
   .stApp { background: #f0f6ff !important; }
   .stApp > header { display: none !important; }
   #MainMenu, footer, header { visibility: hidden; }
   [data-testid="stSidebar"] { display: none !important; }
-
-  /* Kill the default block container top padding */
   .block-container {
     padding-top: 1.5rem !important;
     padding-bottom: 1rem !important;
     max-width: 420px !important;
   }
-
-  /* Compact brand header */
-  .auth-card {
-    text-align: center;
-    margin-bottom: 16px;
-  }
+  .auth-card { text-align: center; margin-bottom: 16px; }
   .brand-logo  { font-size: 40px; line-height: 1; }
-  .brand-title {
-    font-size: 24px; font-weight: 700;
-    color: #0f172a; margin: 6px 0 2px;
-  }
+  .brand-title { font-size: 24px; font-weight: 700; color: #0f172a; margin: 6px 0 2px; }
   .brand-sub {
     font-family: 'DM Mono', monospace;
     font-size: 9px; letter-spacing: .18em;
-    text-transform: uppercase; color: #94a3b8;
-    margin-bottom: 0;
+    text-transform: uppercase; color: #94a3b8; margin-bottom: 0;
   }
   .hint-box, .reg-info {
     background: #eff6ff; border: 1px solid #bfdbfe;
@@ -99,8 +80,6 @@ st.markdown("""
     font-size: 12px; color: #1d4ed8; margin-top: 10px;
   }
   .reg-info { background: #fafafa; border-color: #e2e8f0; color: #64748b; }
-
-  /* Tighten up Streamlit form elements */
   div[data-testid="stTextInput"] { margin-bottom: -8px; }
   div[data-testid="stForm"] { border: none; padding: 0; }
   .stTabs [data-baseweb="tab-list"] { gap: 4px; }
