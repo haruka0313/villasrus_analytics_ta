@@ -7,7 +7,7 @@ from utils.auth import get_cookie_manager, set_session, save_to_cookie, load_fro
 
 load_dotenv()
 
-# ─── PAGE CONFIG — harus pertama ─────────────────────────────────────────────
+# ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Villas R Us · Login",
     page_icon="🏝️",
@@ -18,22 +18,21 @@ st.set_page_config(
 cookies = get_cookie_manager()
 init_db_once()
 
-# ─── CEK QUERY PARAM LOGOUT ──────────────────────────────────────────────────
-just_logged_out = st.query_params.get("logged_out") == "1"
-if just_logged_out:
-    st.query_params.clear()  # bersihkan URL agar tidak loop
-
-# ─── AUTO-LOGIN — skip kalau baru logout ─────────────────────────────────────
-elif not st.session_state.get("logged_in"):
-    user_data = load_from_cookie(cookies)
-    if user_data:
-        set_session(user_data)
-        st.switch_page("pages/1_Home.py")
-        st.stop()
-
+# ─── KUNCI UTAMA: logged_in di session = sumber kebenaran ────────────────────
+# Kalau session sudah ada (navigasi antar halaman), langsung redirect
 if st.session_state.get("logged_in"):
     st.switch_page("pages/1_Home.py")
     st.stop()
+
+# Kalau session KOSONG (fresh load / setelah logout), cek cookie
+# Tapi HANYA jika tidak ada logout flag di cookie
+user_data = load_from_cookie(cookies)
+if user_data:
+    set_session(user_data)
+    st.switch_page("pages/1_Home.py")
+    st.stop()
+
+# Sampai sini = belum login, tampilkan form login
 
 
 # ─── HELPERS ─────────────────────────────────────────────────────────────────

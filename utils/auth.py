@@ -47,24 +47,31 @@ def save_to_cookie(user: dict, cookies):
         pass
 
 def load_from_cookie(cookies) -> dict | None:
-    # Cek logout flag PERTAMA, sebelum apapun
     try:
-        if cookies.get(COOKIE_LOGOUT_FLAG) == "1":
-            cookies[COOKIE_LOGOUT_FLAG] = ""
-            cookies[COOKIE_KEY] = ""
-            cookies.save()
-            return None  # ← stop di sini, jangan lanjut
+        flag = cookies.get(COOKIE_LOGOUT_FLAG)
+        if flag == "1":
+            # Reset flag
+            try:
+                cookies[COOKIE_LOGOUT_FLAG] = "0"
+                cookies[COOKIE_KEY] = ""
+                cookies.save()
+            except Exception:
+                pass
+            return None  # BLOKIR auto-login
     except Exception:
         pass
 
     try:
         raw = cookies.get(COOKIE_KEY)
-        if not raw or raw.strip() == "":
+        if not raw or raw.strip() in ("", '""', "null"):
             return None
-        data    = json.loads(raw)
+        data = json.loads(raw)
         expires = datetime.datetime.fromisoformat(data["expires"])
         if datetime.datetime.now() > expires:
             _clear_auth_cookie(cookies)
+            return None
+        # Validasi minimal field ada
+        if not data.get("username"):
             return None
         return data
     except Exception:
@@ -78,16 +85,16 @@ def _clear_auth_cookie(cookies):
         pass
 
 def logout(cookies):
-    # 1. Set flag dulu SEBELUM hapus auth cookie
+    # Hapus cookie (best effort, tidak masalah kalau gagal)
     try:
-        cookies[COOKIE_LOGOUT_FLAG] = "1"
         cookies[COOKIE_KEY] = ""
+        cookies[COOKIE_LOGOUT_FLAG] = "1"
         cookies.save()
     except Exception:
         pass
 
-    # 2. Clear session
+    # Clear session state SEPENUHNYA
     st.session_state.clear()
 
-    # 3. Langsung switch — TANPA rerun()
+    # Pakai query param sebagai sinyal logout yang 100% reliable
     st.switch_page("streamlit_app.py")
