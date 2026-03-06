@@ -62,25 +62,27 @@ def load_from_cookie(cookies) -> dict | None:
 
 
 def _clear_auth_cookie(cookies):
+    # FIX #1: gunakan del, bukan set ke "" — karena EncryptedCookieManager
+    # mengenkripsi value sehingga set ke "" tidak menghasilkan string kosong
+    # di browser, dan pengecekan raw.strip() == "" tidak akan pernah cocok.
     try:
-        cookies[COOKIE_KEY] = ""
+        if COOKIE_KEY in cookies:
+            del cookies[COOKIE_KEY]
         cookies.save()
     except Exception:
         pass
 
 
 def logout(cookies):
-    # 1. Hapus cookie (best effort)
-    try:
-        cookies[COOKIE_KEY] = ""
-        cookies.save()
-    except Exception:
-        pass
+    # 1. Hapus cookie dengan benar
+    _clear_auth_cookie(cookies)
 
     # 2. Clear session, tapi sisakan flag logout
     st.session_state.clear()
     st.session_state["just_logged_out"] = True
 
-    # 3. Pindah ke login — flag di session_state PASTI terbaca
-    #    karena session_state persist antar switch_page
-    st.switch_page("streamlit_app.py")
+    # FIX #2: Gunakan st.rerun() dulu — bukan langsung switch_page.
+    # Ini memberi browser kesempatan memproses penghapusan cookie sebelum
+    # pindah halaman, sehingga auto-login tidak langsung aktif kembali.
+    # streamlit_app.py akan mendeteksi just_logged_out dan menampilkan login.
+    st.rerun()

@@ -43,5 +43,9 @@ def render_sidebar(cookies):
 
         # ─── LOGOUT ──────────────────────────────────────────────────────────
         if st.button("🚪 Logout", use_container_width=True, key="btn_logout", type="primary"):
-            logout(cookies)  # logout sudah include switch_page
-            st.stop()        # ini sebagai safety net
+            # FIX: logout() sekarang memanggil st.rerun() — bukan switch_page.
+            # st.rerun() akan me-reload halaman ini (misal 1_Home.py),
+            # lalu auth check di atas akan mendeteksi logged_in=False
+            # dan switch_page ke streamlit_app.py secara otomatis.
+            # just_logged_out flag akan mencegah auto-login dari cookie.
+            logout(cookies)
