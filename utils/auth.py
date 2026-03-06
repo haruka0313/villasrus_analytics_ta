@@ -71,14 +71,11 @@ def _delete_cookie(cookies):
 
 
 def logout(cookies):
-    """Hapus cookie, bersihkan session, redirect ke login."""
+    """Hapus cookie, bersihkan session, set flag redirect."""
     _delete_cookie(cookies)
 
-    # Bersihkan semua session state
     for key in list(st.session_state.keys()):
         del st.session_state[key]
 
     st.session_state["logged_in"] = False
-    st.session_state["do_logout"] = False
-
-    st.switch_page(LOGIN_PAGE)
+    st.session_state["do_logout"] = True  # flag untuk trigger redirect

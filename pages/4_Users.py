@@ -7,8 +7,7 @@ from database import get_conn, run_query
 from utils.auth import get_cookie_manager, set_session, load_from_cookie, logout
 from utils.sidebar import render_sidebar
 
-# ─── COOKIES ─────────────────────────────────────────────────────────────────
-cookies = get_cookie_manager()  # kalau belum ready, st.stop() otomatis di dalam fungsi
+cookies = get_cookie_manager()
 
 # ─── AUTH CHECK ──────────────────────────────────────────────────────────────
 if not st.session_state.get("logged_in"):
@@ -18,6 +17,12 @@ if not st.session_state.get("logged_in"):
     else:
         st.switch_page("streamlit_app.py")
         st.stop()
+
+# ─── LOGOUT HANDLER — taruh setelah auth check ───────────────────────────────
+if st.session_state.get("do_logout"):
+    st.session_state["do_logout"] = False
+    st.switch_page("streamlit_app.py")
+    st.stop()
 
 
 # ─── PAGE CONFIG ─────────────────────────────────────────────────────────────
