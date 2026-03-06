@@ -45,11 +45,16 @@ def save_to_cookie(user: dict, cookies):
 
 
 def load_from_cookie(cookies) -> dict | None:
+    # ★ FIX UTAMA: Kalau flag logout aktif, JANGAN baca cookie sama sekali.
+    # Ini mencegah auto-login balik meski cookie belum diproses browser.
+    if st.session_state.get("just_logged_out"):
+        return None
     try:
         raw = cookies.get(COOKIE_KEY)
         if not raw or raw.strip() in ("", '""', "null"):
             return None
         data = json.loads(raw)
+        # Cookie yang sudah "diracuni" saat logout punya username kosong
         if not data.get("username"):
             return None
         expires = datetime.datetime.fromisoformat(data["expires"])
@@ -62,27 +67,31 @@ def load_from_cookie(cookies) -> dict | None:
 
 
 def _clear_auth_cookie(cookies):
-    # FIX #1: gunakan del, bukan set ke "" — karena EncryptedCookieManager
-    # mengenkripsi value sehingga set ke "" tidak menghasilkan string kosong
-    # di browser, dan pengecekan raw.strip() == "" tidak akan pernah cocok.
     try:
-        if COOKIE_KEY in cookies:
-            del cookies[COOKIE_KEY]
+        # ★ FIX: "Racuni" cookie dengan payload expired daripada del/"".
+        # del dan set-ke-"" tidak bekerja konsisten di EncryptedCookieManager
+        # karena value dienkripsi — hasil enkripsi "" != string kosong biasa.
+        expired_payload = json.dumps({
+            "username": "",
+            "expires": "2000-01-01T00:00:00",
+        })
+        cookies[COOKIE_KEY] = expired_payload
         cookies.save()
     except Exception:
         pass
 
 
 def logout(cookies):
-    # 1. Hapus cookie dengan benar
+    # 1. Racuni cookie supaya tidak bisa di-load ulang
     _clear_auth_cookie(cookies)
 
-    # 2. Clear session, tapi sisakan flag logout
+    # 2. Clear seluruh session state
     st.session_state.clear()
+
+    # 3. Set flag — ini yang memblokir load_from_cookie() di streamlit_app.py
     st.session_state["just_logged_out"] = True
 
-    # FIX #2: Gunakan st.rerun() dulu — bukan langsung switch_page.
-    # Ini memberi browser kesempatan memproses penghapusan cookie sebelum
-    # pindah halaman, sehingga auto-login tidak langsung aktif kembali.
-    # streamlit_app.py akan mendeteksi just_logged_out dan menampilkan login.
-    st.rerun()
+    # 4. Pindah ke login — switch_page lebih aman dari rerun karena
+    #    rerun akan re-trigger auth check di halaman aktif yang bisa
+    #    masih membaca cookie lama dari memory browser
+    st.switch_page("streamlit_app.py")

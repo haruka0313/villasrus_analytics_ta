@@ -16,22 +16,15 @@ st.set_page_config(
 )
 
 # ─── INIT COOKIES DULU, BARU CEK FLAG ────────────────────────────────────────
-# FIX #3: cookies harus di-init lebih dulu karena get_cookie_manager() bisa
-# memanggil st.stop() saat cookies belum ready (render pertama).
-# Kalau pop() dilakukan sebelum ini, flag just_logged_out akan hilang
-# di render berikutnya karena sudah ter-pop sebelum st.stop().
+# PENTING: get_cookie_manager() harus dipanggil SEBELUM pop just_logged_out.
+# Kalau cookies belum ready, st.stop() akan dipanggil dan flag akan hilang
+# kalau sudah di-pop duluan.
 cookies = get_cookie_manager()
 init_db_once()
 
-# FIX #2 (lanjutan): logout() di auth.py sekarang memanggil st.rerun()
-# (bukan switch_page). Saat rerun terjadi di halaman yang sama (misal 1_Home),
-# halaman itu akan cek logged_in → False → switch ke sini.
-# Tapi karena session sudah di-clear, just_logged_out sudah di-set,
-# kita tangkap di sini setelah cookies siap.
 just_logged_out = st.session_state.pop("just_logged_out", False)
 
 if not just_logged_out:
-    # Auto-login hanya jika bukan dari logout
     if st.session_state.get("logged_in"):
         st.switch_page("pages/1_Home.py")
         st.stop()
