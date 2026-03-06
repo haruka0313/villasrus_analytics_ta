@@ -56,6 +56,10 @@ def save_to_cookie(user: dict, cookies):
 
 def load_from_cookie(cookies) -> dict | None:
     try:
+        if not st.session_state.get("_cookie_checked"):
+            st.session_state["_cookie_checked"] = True
+            st.rerun()
+
         raw = cookies.get(COOKIE_KEY)
         if not raw:
             return None

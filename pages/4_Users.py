@@ -10,6 +10,11 @@ from utils.sidebar import render_sidebar
 # ─── COOKIES ─────────────────────────────────────────────────────────────────
 cookies = get_cookie_manager()
 
+# Reset flag setiap kali page load
+if "page_loaded" not in st.session_state:
+    st.session_state["page_loaded"] = True
+    st.session_state["_cookie_checked"] = False
+
 # ─── AUTH CHECK ──────────────────────────────────────────────────────────────
 if not st.session_state.get("logged_in"):
     user_data = load_from_cookie(cookies)
