@@ -87,8 +87,6 @@ def logout(cookies):
     for key in list(st.session_state.keys()):
         del st.session_state[key]
 
-    st.session_state["logged_in"] = False
-
-    # Set query param dulu, baru switch page
-    st.query_params["logged_out"] = "1"
-    st.switch_page(LOGIN_PAGE)
+    st.session_state["logged_in"]    = False
+    st.session_state["force_logout"] = True
+    st.rerun()  # rerun page yang sama, force_logout handler akan switch ke login

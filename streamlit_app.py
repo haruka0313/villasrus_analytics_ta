@@ -18,10 +18,12 @@ st.set_page_config(
 cookies = get_cookie_manager()
 init_db_once()
 
-# Cek apakah baru logout
+# ─── CEK QUERY PARAM LOGOUT ──────────────────────────────────────────────────
 just_logged_out = st.query_params.get("logged_out") == "1"
 if just_logged_out:
-    st.query_params.clear()  # bersihkan URL
+    st.query_params.clear()  # bersihkan URL agar tidak loop
+
+# ─── AUTO-LOGIN — skip kalau baru logout ─────────────────────────────────────
 elif not st.session_state.get("logged_in"):
     user_data = load_from_cookie(cookies)
     if user_data:
