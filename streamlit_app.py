@@ -1,5 +1,6 @@
 import streamlit as st
 import hashlib
+import json
 from dotenv import load_dotenv
 from database import init_db_once, get_user_by_credentials, run_query
 from utils.auth import get_cookie_manager, set_session, save_to_cookie, load_from_cookie
@@ -16,6 +17,18 @@ st.set_page_config(
 
 # ─── COOKIE MANAGER ──────────────────────────────────────────────────────────
 cookies = get_cookie_manager()  # st.stop() otomatis kalau belum ready
+
+# ─── DEBUG SEMENTARA ─────────────────────────────────────────────────────────
+
+st.write("🍪 DEBUG COOKIES:")
+try:
+    all_cookies = cookies.getAll() if hasattr(cookies, 'getAll') else {}
+    st.write(f"logout_flag: `{cookies.get('logout_flag')}`")
+    st.write(f"auth cookie: `{cookies.get('auth')}`")
+    st.write(f"session logged_in: `{st.session_state.get('logged_in')}`")
+except Exception as e:
+    st.write(f"Error baca cookie: {e}")
+# ─── END DEBUG ────────────────────────────────────────────────────────────────
 
 # ─── INIT DB ─────────────────────────────────────────────────────────────────
 init_db_once()
