@@ -535,6 +535,14 @@ def load_forecast_from_db(villa_name: str, year: int = 2026) -> pd.DataFrame:
         return pd.DataFrame()
 
     df["forecast_date"] = pd.to_datetime(df["forecast_date"])
+
+    # Cast eksplisit — TiDB/MySQL kadang mengembalikan FLOAT/DECIMAL sebagai object
+    for col in ["predicted_occupancy", "lower_bound", "upper_bound"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+    if "is_fallback" in df.columns:
+        df["is_fallback"] = pd.to_numeric(df["is_fallback"], errors="coerce").fillna(0).astype(int)
+
     df = df.set_index("forecast_date")
     return df
 
