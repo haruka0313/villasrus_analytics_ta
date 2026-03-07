@@ -275,6 +275,22 @@ DDL_STATEMENTS = [
         INDEX idx_villa_name (villa_name)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """,
+
+    """
+CREATE TABLE IF NOT EXISTS sarima_forecasts (
+    id                   BIGINT AUTO_INCREMENT PRIMARY KEY,
+    villa_name           VARCHAR(100) NOT NULL,
+    forecast_date        DATE         NOT NULL,
+    predicted_occupancy  FLOAT        NOT NULL,
+    lower_bound          FLOAT,
+    upper_bound          FLOAT,
+    is_fallback          TINYINT(1)   DEFAULT 0,
+    generated_at         DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_villa_date (villa_name, forecast_date),
+    INDEX idx_fc_villa (villa_name),
+    INDEX idx_fc_date  (forecast_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+""",
 ]
 
 DDL_MIGRATIONS = [
@@ -296,6 +312,12 @@ DDL_MIGRATIONS = [
     "CREATE INDEX IF NOT EXISTS idx_fin_date       ON financial_data (date)",
     "CREATE INDEX IF NOT EXISTS idx_fin_villa_date ON financial_data (villa_code, date)",
     "CREATE INDEX IF NOT EXISTS idx_fin_modeling   ON financial_data (villa_code, for_modeling)",
+
+    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS arima_order    VARCHAR(20)",
+    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS seasonal_order VARCHAR(30)",
+    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS m_used         INT",
+    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS n_train        INT",
+    "ALTER TABLE sarima_models ADD COLUMN IF NOT EXISTS n_cycles       FLOAT",
 ]
 
 SEED_VILLAS = """
@@ -582,6 +604,54 @@ def delete_sarima_model(villa_name: str):
         (villa_name,), fetch=False
     )
 
+# ─── SARIMA FORECASTS ────────────────────────────────────────────────────────
+def save_forecast_to_db(villa_name: str, forecast_df: pd.DataFrame) -> bool:
+    """Simpan hasil forecast ke DB agar konsisten antar session."""
+    if forecast_df is None or forecast_df.empty:
+        return False
+    records = []
+    for date, row in forecast_df.iterrows():
+        records.append((
+            villa_name,
+            date.date() if hasattr(date, 'date') else date,
+            float(row["predicted_occupancy"]),
+            float(row.get("lower_bound", 0)),
+            float(row.get("upper_bound", 0)),
+            int(row.get("fallback", 0)),
+        ))
+    sql = """
+        INSERT INTO sarima_forecasts
+            (villa_name, forecast_date, predicted_occupancy,
+             lower_bound, upper_bound, is_fallback)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            predicted_occupancy = VALUES(predicted_occupancy),
+            lower_bound         = VALUES(lower_bound),
+            upper_bound         = VALUES(upper_bound),
+            is_fallback         = VALUES(is_fallback),
+            generated_at        = NOW()
+    """
+    return run_many(sql, records)
+
+
+def get_forecast_from_db(villa_name: str, year: int = 2026) -> pd.DataFrame:
+    """Load forecast dari DB — hindari hitung ulang tiap page load."""
+    return run_query(
+        """SELECT forecast_date, predicted_occupancy, lower_bound,
+                  upper_bound, is_fallback, generated_at
+           FROM sarima_forecasts
+           WHERE villa_name = %s AND YEAR(forecast_date) = %s
+           ORDER BY forecast_date""",
+        (villa_name, year)
+    )
+
+
+def delete_forecast(villa_name: str) -> bool:
+    """Hapus forecast lama saat model di-retrain."""
+    return run_query(
+        "DELETE FROM sarima_forecasts WHERE villa_name = %s",
+        (villa_name,), fetch=False
+    )
 
 # ─── INSERT BULK ─────────────────────────────────────────────────────────────
 def insert_occupancy_bulk(records: list):

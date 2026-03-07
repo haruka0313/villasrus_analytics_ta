@@ -23,22 +23,26 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ─── RENDER SIDEBAR ──────────────────────────────────────────────────────────
 render_sidebar(cookies)
 
 from database import get_occupancy_data, get_financial_data, get_villas
 
-SARIMA_OK = False
-TRAIN_OK = False
+# ─── SARIMA IMPORTS ───────────────────────────────────────────────────────────
+SARIMA_OK  = False
+TRAIN_OK   = False
 SARIMA_ERR = ""
-sarima_forecast = None
-sarima_exists = None
-sarima_train = None
-sarima_get_meta = None
+sarima_forecast   = None
+sarima_exists     = None
+sarima_train      = None
+sarima_get_meta   = None
+sarima_load_fc_db = None
+sarima_del_fc_db  = None
 
 try:
     from utils.sarima_engine import forecast as sarima_forecast
     from utils.sarima_engine import model_exists as sarima_exists
+    from utils.sarima_engine import load_forecast_from_db as sarima_load_fc_db
+    from utils.sarima_engine import delete_forecast_from_db as sarima_del_fc_db
     SARIMA_OK = True
 except Exception as e:
     SARIMA_ERR = str(e)
@@ -54,8 +58,8 @@ try:
 except Exception:
     pass
 
-st.markdown(
-    """
+# ─── CSS ─────────────────────────────────────────────────────────────────────
+st.markdown("""
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800&family=DM+Mono:wght@400;500&display=swap');
   html, body, [class*="css"] { font-family: 'Sora', sans-serif; }
@@ -127,12 +131,11 @@ st.markdown(
   .stButton > button { border-radius: 8px !important; font-weight: 600 !important; font-size: 13px !important; }
   @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
   .anim { animation: fadeUp .4s ease both; }
+  .cache-badge { display: inline-flex; align-items: center; gap: 5px; font-family: 'DM Mono', monospace; font-size: 9px; padding: 3px 10px; border-radius: 100px; background: #eff6ff; border: 1px solid #bfdbfe; color: #1d4ed8; }
 </style>
-""",
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
-# ── Villa static config ───────────────────────────────────────────────────────
+# ─── VILLA STATIC CONFIG ──────────────────────────────────────────────────────
 VILLA_INSIGHTS = {
     "Briana Villas": {
         "elastisitas": "Semi-Elastis", "color": "#3D6BE8", "area": "Canggu",
@@ -205,20 +208,19 @@ ADR_STATIC = {
     "Ozamiz Villas":  {"r": 0.22, "elastisitas": "Inelastis",    "median_adr": 3.2,  "adr_min": 0.9, "adr_max": 5.4,  "area": "Seminyak", "strategy": "corporate_contract"},
 }
 
-LAYOUT = dict(plot_bgcolor="#ffffff", paper_bgcolor="#F7F7F5", font_color="#555", font_family="DM Sans")
-PEAK_MONTHS     = [6, 7, 8, 12, 1]
+LAYOUT       = dict(plot_bgcolor="#ffffff", paper_bgcolor="#F7F7F5", font_color="#555", font_family="DM Sans")
+PEAK_MONTHS  = [6, 7, 8, 12, 1]
 SHOULDER_MONTHS = [4, 5, 9, 10]
-LOW_MONTHS      = [2, 3, 11]
+LOW_MONTHS   = [2, 3, 11]
 
 
 def safe_hex(hex_color):
     h = hex_color.lstrip("#")
-    if len(h) != 6:
-        h = "3D6BE8"
+    if len(h) != 6: h = "3D6BE8"
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
-# ── Load data ─────────────────────────────────────────────────────────────────
+# ─── LOAD DATA ────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=300)
 def load_data():
     return get_occupancy_data(), get_financial_data(), get_villas()
@@ -255,7 +257,7 @@ def get_color(n):
     return VILLA_COLORS.get(n, VILLA_INSIGHTS.get(n, {}).get("color", "#3D6BE8"))
 
 
-# ── Header ────────────────────────────────────────────────────────────────────
+# ─── HEADER ───────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class='anim'>
   <div class='page-eyebrow'>Integrated Analysis · SARIMA Forecast</div>
@@ -266,24 +268,24 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 1 — EXECUTIVE SUMMARY (all villas combined)
+# SECTION 1 — EXECUTIVE SUMMARY
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("<div class='section-label'>📊 Executive Summary 2026</div>", unsafe_allow_html=True)
 
-hist_occ_all = df_occ["occupancy_pct"].mean() if not df_occ.empty else 70.0
-peak_mask_all = df_occ["month_num"].isin(PEAK_MONTHS)
-peak_avg_all = df_occ.loc[peak_mask_all, "occupancy_pct"].mean() if peak_mask_all.any() else 0.0
+hist_occ_all    = df_occ["occupancy_pct"].mean() if not df_occ.empty else 70.0
+peak_mask_all   = df_occ["month_num"].isin(PEAK_MONTHS)
+peak_avg_all    = df_occ.loc[peak_mask_all, "occupancy_pct"].mean() if peak_mask_all.any() else 0.0
 risk_villas_count = 0
 best_villa_overall = "—"
-best_occ_overall = 0.0
+best_occ_overall   = 0.0
 
 for vn in villa_names:
-    vd_tmp = df_occ[df_occ["villa_name"] == vn]
+    vd_tmp  = df_occ[df_occ["villa_name"] == vn]
     avg_tmp = vd_tmp["occupancy_pct"].mean() if not vd_tmp.empty else 0
     if avg_tmp < 50:
         risk_villas_count += 1
     if avg_tmp > best_occ_overall:
-        best_occ_overall = avg_tmp
+        best_occ_overall   = avg_tmp
         best_villa_overall = vn
 
 occ_2026_actual = df_occ[df_occ["year"] == 2026]["occupancy_pct"].mean() if (df_occ["year"] == 2026).any() else None
@@ -318,7 +320,7 @@ with e4:
     </div>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 2 — VILLA FILTER + MODEL STATUS + FORECAST
+# SECTION 2 — VILLA FILTER + MODEL STATUS
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("<hr class='rule'>", unsafe_allow_html=True)
 
@@ -333,25 +335,40 @@ vc = get_color(sel_villa)
 fc_horizon_months = 6
 fc_horizon_weeks  = int(fc_horizon_months * 4.33)
 
-# ── Model SARIMA status & train ───────────────────────────────────────────────
+# ─── Model status & train ─────────────────────────────────────────────────────
 st.markdown("<div class='section-label'>Model SARIMA — Status &amp; Train</div>", unsafe_allow_html=True)
 
 model_trained = SARIMA_OK and sarima_exists is not None and sarima_exists(sel_villa)
 t1, t2, t3, t4 = st.columns([2.5, 1.5, 1.5, 3])
 
 with t1:
-    if not SARIMA_OK:          bcls, btxt = "err",  "Import Error"
-    elif model_trained:        bcls, btxt = "ok",   "Model Tersedia"
-    else:                      bcls, btxt = "warn", "Belum Dilatih"
+    if not SARIMA_OK:       bcls, btxt = "err",  "Import Error"
+    elif model_trained:     bcls, btxt = "ok",   "Model Tersedia"
+    else:                   bcls, btxt = "warn", "Belum Dilatih"
+
+    # Cek apakah forecast sudah di-cache di DB
+    fc_cached_badge = ""
+    if SARIMA_OK and model_trained and sarima_load_fc_db:
+        try:
+            cached_check = sarima_load_fc_db(sel_villa, year=2026)
+            if not cached_check.empty:
+                from datetime import datetime
+                gen_at = cached_check["generated_at"].iloc[0] if "generated_at" in cached_check.columns else "-"
+                gen_str = str(gen_at)[:16] if gen_at else "-"
+                fc_cached_badge = f"<span class='cache-badge' style='margin-left:8px'>💾 Forecast cached · {gen_str}</span>"
+        except Exception:
+            pass
+
     st.markdown(f"""
     <div style='padding:10px 0'>
       <span class='model-badge {bcls}'>{btxt}</span>
       <span style='font-size:11px;color:#aaa;margin-left:10px;font-family:DM Mono,monospace'>{sel_villa}</span>
+      {fc_cached_badge}
     </div>""", unsafe_allow_html=True)
 
 with t2:
     if TRAIN_OK and not model_trained:
-        if st.button("🚀 Train Model", width='stretch', key="btn_train"):
+        if st.button("🚀 Train Model", use_container_width=True, key="btn_train"):
             with st.spinner(f"Melatih {sel_villa}... (3-8 menit)"):
                 try:
                     vd     = df_occ[df_occ["villa_name"] == sel_villa].copy()
@@ -367,12 +384,12 @@ with t2:
                     import traceback
                     st.error(f"Error: {e}"); st.code(traceback.format_exc(), language="python")
     else:
-        st.button("🚀 Train Model", width='stretch', disabled=True, key="btn_train_dis",
+        st.button("🚀 Train Model", use_container_width=True, disabled=True, key="btn_train_dis",
                   help="Model sudah dilatih." if model_trained else "sarima_engine tidak tersedia.")
 
 with t3:
     if TRAIN_OK and model_trained:
-        if st.button("🔄 Retrain", width='stretch', key="btn_retrain"):
+        if st.button("🔄 Retrain", use_container_width=True, key="btn_retrain"):
             with st.spinner(f"Retrain {sel_villa}..."):
                 try:
                     vd     = df_occ[df_occ["villa_name"] == sel_villa].copy().sort_values("date")
@@ -388,7 +405,7 @@ with t3:
                     import traceback
                     st.error(f"Error: {e}"); st.code(traceback.format_exc(), language="python")
     else:
-        st.button("🔄 Retrain", width='stretch', disabled=True, key="btn_retrain_dis",
+        st.button("🔄 Retrain", use_container_width=True, disabled=True, key="btn_retrain_dis",
                   help="Train model terlebih dahulu.")
 
 with t4:
@@ -402,62 +419,124 @@ with t4:
             order_str = str(meta.get("order","?")) + str(meta.get("seasonal_order",""))
             n_train   = meta.get("n_train","?")
             aic_val   = meta.get("aic","?")
+            m_val     = meta.get("m_used", "?")
             st.markdown(f"""
             <div style='font-size:11px;color:#1A7C44;background:#EDFAF2;border:1px solid #B2EAC8;border-radius:8px;padding:8px 12px;font-family:DM Mono,monospace'>
-            ✅ Order: {order_str} &nbsp;|&nbsp; Train: {n_train} minggu &nbsp;|&nbsp; AIC: {aic_val}
+            ✅ Order: {order_str} &nbsp;|&nbsp; S={m_val} &nbsp;|&nbsp; Train: {n_train} minggu &nbsp;|&nbsp; AIC: {aic_val}
             </div>""", unsafe_allow_html=True)
         except Exception:
             pass
 
 # ══════════════════════════════════════════════════════════════════════════════
-# GENERATE FORECAST
+# GENERATE FORECAST — Load dari DB dulu, hitung ulang hanya jika perlu
 # ══════════════════════════════════════════════════════════════════════════════
-fc_df       = pd.DataFrame()
-using_real  = False
-is_fallback = False   # FIX: track apakah SARIMA pakai seasonal fallback
-model_mape  = None
+FC_START       = "2026-01-01"
+fc_df          = pd.DataFrame()
+using_real     = False
+model_mape     = None
+forecast_from_cache = False
 
 if SARIMA_OK and model_trained:
-    try:
-        raw_fc = sarima_forecast(sel_villa, horizon=fc_horizon_weeks, target_end_date="2026-06-30")
-        if raw_fc is not None and not raw_fc.empty and "error" not in raw_fc.columns:
-            if "predicted_occupancy" in raw_fc.columns:
-                # FIX: pastikan index adalah DatetimeIndex sebelum akses .month / .strftime
-                if not isinstance(raw_fc.index, pd.DatetimeIndex):
-                    raw_fc = raw_fc.set_index("date")
-
-                # FIX: cek kolom fallback dari sarima_engine
-                if "fallback" in raw_fc.columns:
-                    is_fallback = bool(raw_fc["fallback"].any())
-
-                raw_fc["predicted"]  = (raw_fc["predicted_occupancy"] * 100).round(1)
-                raw_fc["lower"]      = (raw_fc["lower_bound"] * 100).round(1)
-                raw_fc["upper"]      = (raw_fc["upper_bound"] * 100).round(1)
-                raw_fc["month_num"]  = raw_fc.index.month
-                raw_fc["month"]      = raw_fc.index.strftime("%b %Y")
-                raw_fc               = raw_fc.reset_index()
-
+    # ── Step 1: Coba load dari DB dulu ────────────────────────────────────────
+    if sarima_load_fc_db:
+        try:
+            cached_fc = sarima_load_fc_db(sel_villa, year=2026)
+            if cached_fc is not None and not cached_fc.empty:
+                cached_fc["predicted"] = (cached_fc["predicted_occupancy"] * 100).round(1)
+                cached_fc["lower"]     = (cached_fc["lower_bound"] * 100).round(1)
+                cached_fc["upper"]     = (cached_fc["upper_bound"] * 100).round(1)
+                cached_fc["month_num"] = cached_fc.index.month
+                cached_fc["month"]     = cached_fc.index.strftime("%b %Y")
+                cached_fc_reset        = cached_fc.reset_index()
                 fc_df = (
-                    raw_fc.groupby(["month","month_num"])
-                    .agg(predicted=("predicted","mean"), lower=("lower","min"), upper=("upper","max"))
+                    cached_fc_reset.groupby(["month","month_num"])
+                    .agg(predicted=("predicted","mean"),
+                         lower=("lower","min"),
+                         upper=("upper","max"))
                     .reset_index()
                 )
-
-                # FIX: ambil tanggal dari label "month" yang sudah benar, bukan hardcode 2026
-                fc_df["date"] = pd.to_datetime(fc_df["month"], format="%b %Y")
+                fc_df["date"] = pd.to_datetime([f"2026-{m:02d}-01" for m in fc_df["month_num"]])
                 fc_df         = fc_df.sort_values("month_num").reset_index(drop=True)
                 using_real    = True
-
+                forecast_from_cache = True
                 if sarima_get_meta:
                     try: model_mape = sarima_get_meta(sel_villa).get("mape")
                     except Exception: pass
-        else:
-            err_msg = raw_fc["error"].iloc[0] if raw_fc is not None and "error" in raw_fc.columns else "unknown"
-            st.warning(f"Forecast SARIMA gagal: {err_msg}. Menggunakan Seasonal Naive.")
-    except Exception as ex:
-        st.warning(f"Forecast error: {ex}. Menggunakan Seasonal Naive.")
+        except Exception as ex:
+            st.warning(f"Gagal load forecast dari DB: {ex}")
 
-# ── Filter aktual 2026 (harus sebelum Seasonal Naive agar FC_START bisa pakai info ini)
+    # ── Step 2: Kalau belum di-cache, hitung ulang ────────────────────────────
+    if fc_df.empty:
+        try:
+            raw_fc = sarima_forecast(sel_villa, horizon=fc_horizon_weeks,
+                                     target_end_date="2026-06-30", use_cache=False)
+            if raw_fc is not None and not raw_fc.empty and "error" not in raw_fc.columns:
+                if "predicted_occupancy" in raw_fc.columns:
+                    raw_fc["predicted"]  = (raw_fc["predicted_occupancy"] * 100).round(1)
+                    raw_fc["lower"]      = (raw_fc["lower_bound"] * 100).round(1)
+                    raw_fc["upper"]      = (raw_fc["upper_bound"] * 100).round(1)
+                    raw_fc["month_num"]  = raw_fc.index.month
+                    raw_fc["month"]      = raw_fc.index.strftime("%b %Y")
+                    raw_fc               = raw_fc.reset_index()
+                    fc_df = (
+                        raw_fc.groupby(["month","month_num"])
+                        .agg(predicted=("predicted","mean"),
+                             lower=("lower","min"),
+                             upper=("upper","max"))
+                        .reset_index()
+                    )
+                    fc_df["date"] = pd.to_datetime([f"2026-{m:02d}-01" for m in fc_df["month_num"]])
+                    fc_df         = fc_df.sort_values("month_num").reset_index(drop=True)
+                    using_real    = True
+                    if sarima_get_meta:
+                        try: model_mape = sarima_get_meta(sel_villa).get("mape")
+                        except Exception: pass
+            else:
+                err_msg = raw_fc["error"].iloc[0] if raw_fc is not None and "error" in raw_fc.columns else "unknown"
+                st.warning(f"Forecast SARIMA gagal: {err_msg}. Menggunakan Seasonal Naive.")
+        except Exception as ex:
+            st.warning(f"Forecast error: {ex}. Menggunakan Seasonal Naive.")
+
+# ── Seasonal Naive fallback ───────────────────────────────────────────────────
+if fc_df.empty:
+    vd_naive        = df_occ[df_occ["villa_name"] == sel_villa].copy()
+    vd_naive["date"]= pd.to_datetime(vd_naive["date"])
+    vd_naive_weekly = vd_naive.set_index("date").resample("W")["occupancy_pct"].mean()
+    weekly_avg_by_month = vd_naive_weekly.groupby(vd_naive_weekly.index.month).mean().to_dict()
+    overall_avg_naive   = vd_naive_weekly.mean() if len(vd_naive_weekly) > 0 else 70.0
+
+    rows_fc_weekly = []
+    for d in pd.date_range(FC_START, end="2026-06-30", freq="W"):
+        pred = float(np.clip(weekly_avg_by_month.get(d.month, overall_avg_naive), 0, 100))
+        ci   = pred * 0.10
+        rows_fc_weekly.append({"date": d, "month": d.strftime("%b %Y"), "month_num": d.month,
+                                "predicted": round(pred,1), "upper": round(min(100,pred+ci),1),
+                                "lower": round(max(0,pred-ci),1)})
+
+    fc_df_weekly = pd.DataFrame(rows_fc_weekly)
+    fc_df = (
+        fc_df_weekly.groupby(["month","month_num"])
+        .agg({"predicted":"mean","lower":"min","upper":"max"})
+        .reset_index()
+    )
+    fc_df["date"] = pd.to_datetime([f"2026-{m:02d}-01" for m in fc_df["month_num"]])
+    fc_df         = fc_df.sort_values("month_num").reset_index(drop=True)
+
+if "date" not in fc_df.columns:
+    fc_df["date"] = pd.to_datetime([f"2026-{i+1:02d}-01" for i in range(len(fc_df))])
+if "month_num" not in fc_df.columns:
+    fc_df["month_num"] = pd.to_datetime(fc_df["date"]).dt.month
+
+# ── Historis ──────────────────────────────────────────────────────────────────
+vd_hist      = df_occ[df_occ["villa_name"] == sel_villa].copy()
+hist_occ_avg = vd_hist["occupancy_pct"].mean() if not vd_hist.empty else 70.0
+hist_by_mnum = (
+    vd_hist.groupby("month_num")["occupancy_pct"]
+    .agg(hist_avg="mean", hist_max="max", hist_min="min")
+    .reset_index()
+)
+
+# ── Aktual 2026 ───────────────────────────────────────────────────────────────
 actual_2026_raw = df_occ[
     (df_occ["villa_name"] == sel_villa) & (df_occ["year"] == 2026)
 ].copy()
@@ -476,73 +555,14 @@ if not actual_2026_raw.empty:
 
 has_actual = not actual_monthly.empty
 
-# ── Seasonal Naive fallback ───────────────────────────────────────────────────
-if fc_df.empty:
-    # FIX: FC_START mulai setelah bulan aktual terakhir, hindari overlap
-    if has_actual:
-        last_actual_month = int(actual_monthly["month_num"].max())
-        next_month        = last_actual_month + 1
-        if next_month > 12:
-            FC_START = "2027-01-01"
-        else:
-            FC_START = f"2026-{next_month:02d}-01"
-    else:
-        FC_START = "2026-01-01"
-
-    vd_naive            = df_occ[df_occ["villa_name"] == sel_villa].copy()
-    vd_naive["date"]    = pd.to_datetime(vd_naive["date"])
-    vd_naive_weekly     = vd_naive.set_index("date").resample("W")["occupancy_pct"].mean()
-    weekly_avg_by_month = vd_naive_weekly.groupby(vd_naive_weekly.index.month).mean().to_dict()
-    overall_avg_naive   = vd_naive_weekly.mean() if len(vd_naive_weekly) > 0 else 70.0
-
-    rows_fc_weekly = []
-    for d in pd.date_range(FC_START, end="2026-06-30", freq="W"):
-        pred = float(np.clip(weekly_avg_by_month.get(d.month, overall_avg_naive), 0, 100))
-        ci   = pred * 0.10
-        rows_fc_weekly.append({
-            "date": d, "month": d.strftime("%b %Y"), "month_num": d.month,
-            "predicted": round(pred,1), "upper": round(min(100,pred+ci),1),
-            "lower": round(max(0,pred-ci),1),
-        })
-
-    if rows_fc_weekly:
-        fc_df_weekly = pd.DataFrame(rows_fc_weekly)
-        fc_df = (
-            fc_df_weekly.groupby(["month","month_num"])
-            .agg({"predicted":"mean","lower":"min","upper":"max"})
-            .reset_index()
-        )
-        # FIX: ambil dari label month, bukan hardcode 2026
-        fc_df["date"] = pd.to_datetime(fc_df["month"], format="%b %Y")
-        fc_df         = fc_df.sort_values("month_num").reset_index(drop=True)
-    else:
-        fc_df = pd.DataFrame()
-
-if not fc_df.empty:
-    if "date" not in fc_df.columns:
-        fc_df["date"] = pd.to_datetime(fc_df["month"], format="%b %Y")
-    if "month_num" not in fc_df.columns:
-        fc_df["month_num"] = pd.to_datetime(fc_df["date"]).dt.month
-
-# ── Historis ──────────────────────────────────────────────────────────────────
-vd_hist      = df_occ[df_occ["villa_name"] == sel_villa].copy()
-hist_occ_avg = vd_hist["occupancy_pct"].mean() if not vd_hist.empty else 70.0
-hist_by_mnum = (
-    vd_hist.groupby("month_num")["occupancy_pct"]
-    .agg(hist_avg="mean", hist_max="max", hist_min="min")
-    .reset_index()
-)
-
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 3 — PREDIKSI VS AKTUAL CHART
+# SECTION 3 — CHART PREDIKSI VS AKTUAL
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("<hr class='rule'>", unsafe_allow_html=True)
 
-# Label model untuk display
-if using_real:
-    model_label = "SARIMA (Seasonal Fallback)" if is_fallback else "SARIMA"
-else:
-    model_label = "Seasonal Naive"
+# Label sumber forecast
+model_label = "SARIMA" if using_real else "Seasonal Naive"
+cache_label = " · 💾 dari DB cache" if forecast_from_cache else " · 🔄 dihitung baru"
 
 if has_actual:
     covered = len(actual_monthly)
@@ -551,30 +571,20 @@ if has_actual:
 <div style='background:#EEF3FF;border:1px solid #C5D7FF;border-radius:10px;
      padding:10px 16px;margin-bottom:14px;font-size:12px;color:#1d4ed8'>
   ✅ <b>Data aktual tersedia</b> — {covered} bulan sudah ter-upload &nbsp;·&nbsp;
-  Garis oranye = realisasi &nbsp;·&nbsp; Garis biru = prediksi {model_label}
+  Garis oranye = realisasi &nbsp;·&nbsp; Garis biru = prediksi {model_label}{cache_label}
 </div>""", unsafe_allow_html=True)
 else:
     st.markdown(f"""
 <div class='section-label'>Prediksi Okupansi 2026</div>
 <div style='background:#FFF8EC;border:1px solid #FFD88A;border-radius:10px;
      padding:10px 16px;margin-bottom:14px;font-size:12px;color:#A05C00'>
-  ⏳ <b>Belum ada data aktual 2026</b> — Upload data 2026 lewat halaman Upload
-  untuk melihat perbandingan prediksi vs realisasi secara langsung
-</div>""", unsafe_allow_html=True)
-
-# FIX: tampilkan banner khusus jika SARIMA pakai seasonal fallback
-if using_real and is_fallback:
-    st.markdown("""
-<div style='background:#FFF8EC;border:1px solid #FFD88A;border-radius:10px;
-     padding:10px 16px;margin-bottom:14px;font-size:12px;color:#A05C00'>
-  ⚠️ <b>SARIMA Seasonal Fallback aktif</b> — Model mendeteksi forecast tidak wajar
-  (flat ceiling / floor / tidak bergerak), diganti otomatis dengan rata-rata historis musiman.
-  Pertimbangkan <b>Retrain</b> model dengan data terbaru.
+  ⏳ <b>Belum ada data aktual 2026</b> — Upload data 2026 lewat halaman Upload &nbsp;·&nbsp;
+  Model: {model_label}{cache_label}
 </div>""", unsafe_allow_html=True)
 
 fig_occ = go.Figure()
 
-if not fc_df.empty and show_ci:
+if show_ci and not fc_df.empty:
     r_, g_, b_ = safe_hex(vc)
     fig_occ.add_trace(go.Scatter(
         x=list(fc_df["month"]) + list(fc_df["month"][::-1]),
@@ -602,14 +612,6 @@ if has_actual:
         hovertemplate="<b>%{x}</b><br>Aktual: %{y:.1f}%<extra></extra>",
     ))
 
-# FIX: categoryarray gabungkan bulan prediksi + bulan aktual
-# agar titik aktual tidak hilang dari chart
-all_chart_months = sorted(
-    set(list(fc_df["month"] if not fc_df.empty else []))
-    | set(list(actual_monthly["month"]) if has_actual else []),
-    key=lambda x: pd.Timestamp(x),
-)
-
 fig_occ.update_layout(
     **LAYOUT, height=380, margin=dict(l=0, r=0, t=60, b=40),
     title=dict(
@@ -618,18 +620,14 @@ fig_occ.update_layout(
         x=0, xanchor="left", y=0.97, yanchor="top",
     ),
     legend=dict(orientation="h", y=1.15, x=0, xanchor="left", font_size=12, bgcolor="rgba(0,0,0,0)"),
-    xaxis=dict(
-        showgrid=False, tickangle=-35, tickfont_size=11, linecolor="#E8E8E5",
-        type="category", categoryorder="array",
-        # FIX: pakai all_chart_months bukan hanya fc_df["month"]
-        categoryarray=all_chart_months,
-    ),
+    xaxis=dict(showgrid=False, tickangle=-35, tickfont_size=11, linecolor="#E8E8E5",
+               type="category", categoryorder="array", categoryarray=list(fc_df["month"])),
     yaxis=dict(showgrid=True, gridcolor="#F0F0EE", ticksuffix="%", range=[0,110], tickfont_size=11),
 )
-st.plotly_chart(fig_occ, width='stretch')
+st.plotly_chart(fig_occ, use_container_width=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 4 — PREDIKSI SUMMARY TABLE PER BULAN
+# SECTION 4 — TABEL PREDIKSI PER BULAN
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("<hr class='rule'>", unsafe_allow_html=True)
 st.markdown("<div class='section-label'>Prediksi Okupansi Per Bulan 2026</div>", unsafe_allow_html=True)
@@ -640,7 +638,8 @@ st.markdown(f"""
   <b>📐 Model:</b> {model_label} &nbsp;|&nbsp;
   <b>Vila:</b> {sel_villa} &nbsp;|&nbsp;
   <b>S = 52</b> (tahunan pada data mingguan) &nbsp;|&nbsp;
-  <b>Horizon:</b> {fc_horizon_months} bulan ({fc_horizon_weeks} minggu prediksi)
+  <b>Horizon:</b> {fc_horizon_months} bulan ({fc_horizon_weeks} minggu) &nbsp;|&nbsp;
+  {'💾 Forecast dari DB cache' if forecast_from_cache else '🔄 Forecast dihitung baru'}
 </div>
 """, unsafe_allow_html=True)
 
@@ -661,7 +660,7 @@ if not fc_df.empty:
         has_row_actual = not pd.isna(actual_val)
 
         oc    = "#1A7C44" if occ_pred >= 80 else "#A05C00" if occ_pred >= 50 else "#C0392B"
-        bar_w = int(min(occ_pred, 100))
+        bar_w = int(occ_pred)
 
         if has_row_actual:
             err_val   = float(actual_val) - occ_pred
@@ -744,94 +743,93 @@ if has_actual and not fc_df.empty:
     eval_df["abs_error"] = eval_df["error"].abs()
     eval_df["ape"]       = (eval_df["abs_error"] / eval_df["actual"].replace(0, np.nan) * 100).round(2)
 
-    if not eval_df.empty:
-        mae_live  = eval_df["abs_error"].mean()
-        mape_live = eval_df["ape"].mean()
-        rmse_live = float(np.sqrt((eval_df["error"] ** 2).mean()))
-        bias      = eval_df["error"].mean()
+    mae_live  = eval_df["abs_error"].mean()
+    mape_live = eval_df["ape"].mean()
+    rmse_live = float(np.sqrt((eval_df["error"] ** 2).mean()))
+    bias      = eval_df["error"].mean()
 
-        st.markdown("<hr class='rule'>", unsafe_allow_html=True)
-        st.markdown("<div class='section-label'>📐 Evaluasi Akurasi — Prediksi vs Aktual 2026</div>", unsafe_allow_html=True)
-        st.markdown(
-            f"<p style='font-size:12px;color:#888;margin-bottom:16px'>"
-            f"Dihitung dari <b>{len(eval_df)} bulan</b> yang sudah tersedia data aktualnya.</p>",
-            unsafe_allow_html=True,
+    st.markdown("<hr class='rule'>", unsafe_allow_html=True)
+    st.markdown("<div class='section-label'>📐 Evaluasi Akurasi — Prediksi vs Aktual 2026</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<p style='font-size:12px;color:#888;margin-bottom:16px'>"
+        f"Dihitung dari <b>{len(eval_df)} bulan</b> yang sudah tersedia data aktualnya.</p>",
+        unsafe_allow_html=True,
+    )
+
+    ka, kb, kc, kd = st.columns(4)
+    for col, label, val, note, color in [
+        (ka, "MAPE Aktual", f"{mape_live:.1f}%", "< 10% Sangat Baik · < 20% Baik",
+         "#1A7C44" if mape_live < 10 else "#A05C00" if mape_live < 20 else "#C0392B"),
+        (kb, "MAE",  f"{mae_live:.1f}pp",  "Mean Absolute Error (poin persen)",
+         "#1A7C44" if mae_live < 5 else "#A05C00" if mae_live < 15 else "#C0392B"),
+        (kc, "RMSE", f"{rmse_live:.1f}pp", "Root Mean Squared Error",
+         "#1A7C44" if rmse_live < 5 else "#A05C00" if rmse_live < 15 else "#C0392B"),
+        (kd, "Bias Model", f"{bias:+.1f}pp", "+ = under-forecast · − = over-forecast",
+         "#1d4ed8" if abs(bias) < 3 else "#A05C00"),
+    ]:
+        with col:
+            st.markdown(f"""<div class='exec-metric'>
+              <div class='exec-metric-label'>{label}</div>
+              <div class='exec-metric-value' style='color:{color};font-size:26px'>{val}</div>
+              <div class='exec-metric-delta'>{note}</div>
+            </div>""", unsafe_allow_html=True)
+
+    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+
+    bar_colors = ["#1A7C44" if e >= 0 else "#C0392B" for e in eval_df["error"]]
+    fig_err = go.Figure()
+    fig_err.add_trace(go.Bar(
+        x=eval_df["month"], y=eval_df["error"],
+        marker_color=bar_colors, marker_line_width=0,
+        customdata=eval_df[["actual","predicted","ape"]].values,
+        hovertemplate=(
+            "<b>%{x}</b><br>Aktual: %{customdata[0]:.1f}%<br>"
+            "Prediksi: %{customdata[1]:.1f}%<br>"
+            "Error: %{y:+.1f}pp<br>APE: %{customdata[2]:.1f}%<extra></extra>"
+        ),
+    ))
+    fig_err.add_hline(y=0, line_color="#334155", line_width=1.5)
+    for _, row in eval_df.iterrows():
+        offset = 2.5 if row["error"] >= 0 else -4.5
+        fig_err.add_annotation(
+            x=row["month"], y=row["error"] + offset,
+            text=f"{row['ape']:.1f}%", showarrow=False,
+            font=dict(size=9, color="#334155", family="DM Mono"),
         )
+    fig_err.update_layout(
+        **LAYOUT, height=300, margin=dict(l=0, r=0, t=60, b=40),
+        title=dict(
+            text="Error per Bulan (Aktual − Prediksi)  "
+                 "<span style='font-size:11px;color:#94a3b8;font-weight:400'>"
+                 "· angka = APE%  ·  hijau = aktual lebih tinggi  ·  merah = aktual lebih rendah</span>",
+            font=dict(size=14, color="#111", family="DM Serif Display"), x=0,
+        ),
+        xaxis=dict(showgrid=False, tickangle=-35, tickfont_size=11, linecolor="#E8E8E5",
+                   type="category", categoryorder="array", categoryarray=list(eval_df["month"])),
+        yaxis=dict(showgrid=True, gridcolor="#F0F0EE", ticksuffix="pp", tickfont_size=11, zeroline=False),
+        showlegend=False,
+    )
+    st.plotly_chart(fig_err, use_container_width=True)
 
-        ka, kb, kc, kd = st.columns(4)
-        for col, label, val, note, color in [
-            (ka, "MAPE Aktual", f"{mape_live:.1f}%", "< 10% Sangat Baik · < 20% Baik",
-             "#1A7C44" if mape_live < 10 else "#A05C00" if mape_live < 20 else "#C0392B"),
-            (kb, "MAE",  f"{mae_live:.1f}pp",  "Mean Absolute Error (poin persen)",
-             "#1A7C44" if mae_live < 5 else "#A05C00" if mae_live < 15 else "#C0392B"),
-            (kc, "RMSE", f"{rmse_live:.1f}pp", "Root Mean Squared Error",
-             "#1A7C44" if rmse_live < 5 else "#A05C00" if rmse_live < 15 else "#C0392B"),
-            (kd, "Bias Model", f"{bias:+.1f}pp", "+ = aktual lebih tinggi (under-forecast)  ·  − = over-forecast",
-             "#1d4ed8" if abs(bias) < 3 else "#A05C00"),
-        ]:
-            with col:
-                st.markdown(f"""<div class='exec-metric'>
-                  <div class='exec-metric-label'>{label}</div>
-                  <div class='exec-metric-value' style='color:{color};font-size:26px'>{val}</div>
-                  <div class='exec-metric-delta'>{note}</div>
-                </div>""", unsafe_allow_html=True)
+    with st.expander("📋 Lihat detail tabel evaluasi per bulan", expanded=False):
+        eval_display = eval_df[["month","predicted","actual","error","ape"]].copy()
+        eval_display.columns = ["Bulan","Prediksi (%)","Aktual (%)","Error (pp)","APE (%)"]
 
-        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
+        def style_error(v):
+            if not isinstance(v, (int, float)): return ""
+            if v > 0:  return "color: #1A7C44; font-weight: 600"
+            if v < 0:  return "color: #C0392B; font-weight: 600"
+            return ""
 
-        bar_colors = ["#1A7C44" if e >= 0 else "#C0392B" for e in eval_df["error"]]
-        fig_err = go.Figure()
-        fig_err.add_trace(go.Bar(
-            x=eval_df["month"], y=eval_df["error"],
-            marker_color=bar_colors, marker_line_width=0,
-            customdata=eval_df[["actual","predicted","ape"]].values,
-            hovertemplate=(
-                "<b>%{x}</b><br>Aktual: %{customdata[0]:.1f}%<br>"
-                "Prediksi: %{customdata[1]:.1f}%<br>"
-                "Error: %{y:+.1f}pp<br>APE: %{customdata[2]:.1f}%<extra></extra>"
-            ),
-        ))
-        fig_err.add_hline(y=0, line_color="#334155", line_width=1.5)
-        for _, row in eval_df.iterrows():
-            offset = 2.5 if row["error"] >= 0 else -4.5
-            fig_err.add_annotation(
-                x=row["month"], y=row["error"] + offset,
-                text=f"{row['ape']:.1f}%", showarrow=False,
-                font=dict(size=9, color="#334155", family="DM Mono"),
-            )
-        fig_err.update_layout(
-            **LAYOUT, height=300, margin=dict(l=0, r=0, t=60, b=40),
-            title=dict(
-                text=("Error per Bulan (Aktual − Prediksi)"
-                      "  <span style='font-size:11px;color:#94a3b8;font-weight:400'>"
-                      "· angka = APE%  ·  hijau = aktual lebih tinggi  ·  merah = aktual lebih rendah</span>"),
-                font=dict(size=14, color="#111", family="DM Serif Display"), x=0,
-            ),
-            xaxis=dict(showgrid=False, tickangle=-35, tickfont_size=11, linecolor="#E8E8E5",
-                       type="category", categoryorder="array", categoryarray=list(eval_df["month"])),
-            yaxis=dict(showgrid=True, gridcolor="#F0F0EE", ticksuffix="pp", tickfont_size=11, zeroline=False),
-            showlegend=False,
+        st.dataframe(
+            eval_display.style
+                .format({"Prediksi (%)":"{:.1f}","Aktual (%)":"{:.1f}","Error (pp)":"{:+.1f}","APE (%)":"{:.1f}%"})
+                .applymap(style_error, subset=["Error (pp)"]),
+            use_container_width=True, hide_index=True,
         )
-        st.plotly_chart(fig_err, width='stretch')
-
-        with st.expander("📋 Lihat detail tabel evaluasi per bulan", expanded=False):
-            eval_display = eval_df[["month","predicted","actual","error","ape"]].copy()
-            eval_display.columns = ["Bulan","Prediksi (%)","Aktual (%)","Error (pp)","APE (%)"]
-
-            def style_error(v):
-                if not isinstance(v, (int, float)): return ""
-                if v > 0:  return "color: #1A7C44; font-weight: 600"
-                if v < 0:  return "color: #C0392B; font-weight: 600"
-                return ""
-
-            st.dataframe(
-                eval_display.style
-                    .format({"Prediksi (%)":"{:.1f}","Aktual (%)":"{:.1f}","Error (pp)":"{:+.1f}","APE (%)":"{:.1f}%"})
-                    .applymap(style_error, subset=["Error (pp)"]),
-                width='stretch', hide_index=True,
-            )
 
 # ══════════════════════════════════════════════════════════════════════════════
-# SECTION 6 — EVALUASI AKURASI SUMMARY SEMUA VILA
+# SECTION 6 — SUMMARY SEMUA VILA
 # ══════════════════════════════════════════════════════════════════════════════
 trained_villas = []
 if SARIMA_OK and sarima_exists:
@@ -879,6 +877,7 @@ if trained_villas:
         mape_v    = meta.get("mape") or SARIMA_META_STATIC.get(vn,{}).get("mape")
         rmse_v    = meta.get("rmse") or SARIMA_META_STATIC.get(vn,{}).get("rmse")
         aic_v     = meta.get("aic")  or SARIMA_META_STATIC.get(vn,{}).get("aic")
+        m_val     = meta.get("m_used", 52)
         order_raw = (f"{meta.get('order',())}{meta.get('seasonal_order','')}"
                      if meta.get("order") and meta.get("seasonal_order")
                      else SARIMA_META_STATIC.get(vn,{}).get("order","—"))
@@ -886,7 +885,8 @@ if trained_villas:
         if aic_v: aic_v = round(aic_v)
 
         all_metrics.append({"vn":vn,"color":vn_color,"is_trained":is_trained,
-                             "mape":mape_v,"rmse":rmse_v,"aic":aic_v,"order":order_s,
+                             "mape":mape_v,"rmse":rmse_v,"aic":aic_v,
+                             "order":order_s,"m_val":m_val,
                              "mc":mape_color(mape_v),"rc":rmse_color(rmse_v)})
 
     rows_acc = ""
@@ -896,12 +896,13 @@ if trained_villas:
         vn_color = m["color"]
         dot      = f"<span class='villa-dot' style='background:{vn_color}'></span>"
         order    = m["order"] or "—"
+        m_val    = m.get("m_val", 52)
 
         if not m["is_trained"]:
             rows_acc += f"""<tr style='opacity:0.45'>
               <td>{dot}<span style='font-weight:600'>{vn}</span>
                 <br><span style='font-size:10px;color:#aaa;font-family:DM Mono,monospace'>{area}</span></td>
-              <td colspan='6' style='font-size:11px;color:#bbb;font-family:DM Mono,monospace;text-align:center'>
+              <td colspan='5' style='font-size:11px;color:#bbb;font-family:DM Mono,monospace;text-align:center'>
                 ⏳ Belum dilatih — Train model untuk melihat metrik</td>
             </tr>"""
         else:
@@ -909,10 +910,8 @@ if trained_villas:
                 parts      = order.split(")(")
                 arima_part = parts[0] + ")"
                 seas_part  = "(" + parts[1]
-                order_html = (
-                    f"<span style='font-size:13px;font-weight:700;font-family:DM Mono,monospace;color:#7C3AED'>{arima_part}</span>"
-                    f"<span style='font-size:12px;font-weight:600;font-family:DM Mono,monospace;color:#A855F7'>{seas_part}</span>"
-                )
+                order_html = (f"<span style='font-size:13px;font-weight:700;font-family:DM Mono,monospace;color:#7C3AED'>{arima_part}</span>"
+                              f"<span style='font-size:12px;font-weight:600;font-family:DM Mono,monospace;color:#A855F7'>{seas_part}</span>")
             else:
                 order_html = f"<span style='font-size:13px;font-weight:700;font-family:DM Mono,monospace;color:#7C3AED'>{order}</span>"
 
@@ -921,7 +920,7 @@ if trained_villas:
               <td><span style='font-size:17px;font-weight:700;font-family:DM Mono,monospace;color:{m["mc"]}'>{fmt_metric(m["mape"],"%",2)}</span></td>
               <td><span style='font-size:15px;font-weight:700;font-family:DM Mono,monospace;color:{m["rc"]}'>{fmt_metric(m["rmse"],"",2)}</span></td>
               <td><span style='font-size:13px;font-family:DM Mono,monospace;color:#3D6BE8'>{fmt_metric(m["aic"],"",0)}</span></td>
-              <td>{order_html}<br><span style='font-size:9px;color:#94a3b8;font-family:DM Mono,monospace'>S=52 (tahunan)</span></td>
+              <td>{order_html}<br><span style='font-size:9px;color:#94a3b8;font-family:DM Mono,monospace'>S={m_val}</span></td>
             </tr>"""
 
     st.markdown(f"""
@@ -1006,7 +1005,6 @@ st.markdown("""
   <div class='section-label'>📈 Analisis Deskriptif — Keterhubungan ADR & Okupansi</div>
   <p style='font-size:13px;color:#666;margin-bottom:4px'>
     Rata-rata okupansi bulanan (semua hari) vs rata-rata ADR bulanan (hanya hari ada revenue).
-    Konsisten dengan metodologi notebook penelitian.
   </p>
 </div>
 """, unsafe_allow_html=True)
@@ -1016,22 +1014,12 @@ all_years = sorted(df_occ["year"].unique().tolist())
 
 fa, fb, fc_col = st.columns([1.5, 2.5, 2])
 with fa:
-    sel_area_desc = st.multiselect(
-        "Filter Area", options=all_areas, default=all_areas, key="desc_area",
-        placeholder="Semua area"
-    )
+    sel_area_desc = st.multiselect("Filter Area", options=all_areas, default=all_areas, key="desc_area", placeholder="Semua area")
 with fb:
-    filtered_villa_names = [v for v in villa_names
-                            if VILLA_INSIGHTS.get(v,{}).get("area","") in (sel_area_desc or all_areas)]
-    sel_villas_desc = st.multiselect(
-        "Filter Vila", options=filtered_villa_names, default=filtered_villa_names, key="desc_villa",
-        placeholder="Semua vila"
-    )
+    filtered_villa_names = [v for v in villa_names if VILLA_INSIGHTS.get(v,{}).get("area","") in (sel_area_desc or all_areas)]
+    sel_villas_desc = st.multiselect("Filter Vila", options=filtered_villa_names, default=filtered_villa_names, key="desc_villa", placeholder="Semua vila")
 with fc_col:
-    sel_years_desc = st.multiselect(
-        "Filter Tahun Historis", options=all_years, default=all_years, key="desc_year",
-        placeholder="Semua tahun"
-    )
+    sel_years_desc = st.multiselect("Filter Tahun Historis", options=all_years, default=all_years, key="desc_year", placeholder="Semua tahun")
 
 display_villas = sel_villas_desc if sel_villas_desc else filtered_villa_names
 year_filter    = sel_years_desc if sel_years_desc else None
@@ -1043,13 +1031,6 @@ st.markdown("""
   Tren Musiman ADR vs Okupansi per Vila (Dual-Axis)
 </div>""", unsafe_allow_html=True)
 
-st.markdown("""
-<p style='font-size:12px;color:#888;margin-bottom:16px'>
-  Batang = rata-rata okupansi bulanan (sumbu kanan, %). &nbsp;
-  Garis oranye = rata-rata ADR bulanan (sumbu kiri, Juta Rupiah). &nbsp;
-  ADR hanya dihitung dari hari vila terisi dengan revenue &gt; 0.
-</p>""", unsafe_allow_html=True)
-
 if not display_villas:
     st.info("Pilih minimal satu vila untuk menampilkan analisis.")
 else:
@@ -1058,7 +1039,7 @@ else:
 
     for tab_idx, (tab, vn) in enumerate(zip(tab_villas_d, display_villas)):
         with tab:
-            vc4                 = get_color(vn)
+            vc4              = get_color(vn)
             r_hex, g_hex, b_hex = safe_hex(vc4)
             monthly, cd2, daily_merged = build_monthly_data_filtered(vn, year_filter=year_filter)
 
@@ -1087,15 +1068,6 @@ else:
                     hovertemplate="<b>%{x}</b><br>ADR: Rp%{y:.2f} Juta<extra></extra>",
                 ), secondary_y=False)
 
-            for period_val in monthly["period"]:
-                try:
-                    mn_num = int(str(period_val)[-2:])
-                    if mn_num in PEAK_MONTHS:
-                        fig_dual.add_vrect(x0=period_val, x1=period_val,
-                                           fillcolor="rgba(255,200,0,0.07)", layer="below", line_width=0)
-                except Exception:
-                    pass
-
             r_val    = cd2.get("r", 0)
             n_obs    = cd2.get("n", "—")
             data_src = "live" if cd2.get("live") else "statis"
@@ -1106,7 +1078,7 @@ else:
                     text=(f"Tren Musiman ADR & Okupansi — {vn}"
                           f"&nbsp;&nbsp;<span style='font-size:13px;color:#666'>"
                           f"Korelasi Pearson: <b>r = {r_val:+.2f}</b>"
-                          f"&nbsp;·&nbsp;<span style='font-size:11px;color:#aaa'>n={n_obs} hari · {data_src}</span></span>"),
+                          f"&nbsp;·&nbsp;<span style='font-size:11px;color:#aaa'>n={n_obs} · {data_src}</span></span>"),
                     font=dict(size=14, color="#111", family="DM Serif Display"), x=0, xanchor="left",
                 ),
                 legend=dict(orientation="h", y=1.12, x=0, xanchor="left", font_size=11, bgcolor="rgba(0,0,0,0)"),
@@ -1117,7 +1089,7 @@ else:
                                    showgrid=True, gridcolor="#F0F0EE", ticksuffix=" Jt", tickfont_size=11, rangemode="tozero")
             fig_dual.update_yaxes(title_text="Ocupansi (%)", secondary_y=True,
                                    showgrid=False, ticksuffix="%", range=[0,130], tickfont_size=11)
-            st.plotly_chart(fig_dual, width='stretch')
+            st.plotly_chart(fig_dual, use_container_width=True)
 
             if not daily_merged.empty and len(daily_merged) >= 5:
                 st.markdown(f"""
@@ -1132,22 +1104,21 @@ else:
 
                 try:
                     m_coef, b_coef = np.polyfit(scatter_x, scatter_y, 1)
-                    x_line = np.linspace(scatter_x.min(), scatter_x.max(), 100)
-                    y_line = m_coef * x_line + b_coef
+                    x_line  = np.linspace(scatter_x.min(), scatter_x.max(), 100)
+                    y_line  = m_coef * x_line + b_coef
                     has_reg = True
                 except Exception:
                     has_reg = False
 
-                r_val_sc   = cd2.get("r", 0)
-                r2_val     = round(r_val_sc ** 2, 3)
+                r_val_sc  = cd2.get("r", 0)
+                r2_val    = round(r_val_sc ** 2, 3)
                 adr_med_sc = np.median(scatter_y)
                 point_colors = [f"rgba({r_hex},{g_hex},{b_hex},0.65)" if y >= adr_med_sc
                                 else f"rgba({r_hex},{g_hex},{b_hex},0.30)" for y in scatter_y]
 
                 fig_scatter = go.Figure()
                 fig_scatter.add_trace(go.Scatter(
-                    x=scatter_x, y=scatter_y,
-                    mode="markers",
+                    x=scatter_x, y=scatter_y, mode="markers",
                     marker=dict(size=6, color=point_colors, line=dict(color=vc4, width=0.5)),
                     name="Hari Observasi",
                     hovertemplate="Ocupansi: %{x:.1f}%<br>ADR: Rp%{y:.2f} Juta<extra></extra>",
@@ -1155,19 +1126,16 @@ else:
 
                 if has_reg:
                     fig_scatter.add_trace(go.Scatter(
-                        x=x_line, y=y_line,
-                        mode="lines",
+                        x=x_line, y=y_line, mode="lines",
                         line=dict(color="#f97316", width=2.5, dash="dash"),
-                        name=f"Regresi linier (r={r_val_sc:+.2f})",
-                        hoverinfo="skip",
+                        name=f"Regresi linier (r={r_val_sc:+.2f})", hoverinfo="skip",
                     ))
 
                 fig_scatter.add_annotation(
                     xref="paper", yref="paper", x=0.97, y=0.97,
                     text=f"<b>r = {r_val_sc:+.2f}</b>  |  R² = {r2_val:.3f}  |  n = {len(scatter_x)}",
                     showarrow=False, bgcolor="#fff", bordercolor=vc4, borderwidth=1,
-                    font=dict(size=12, color=vc4, family="DM Mono"),
-                    align="right",
+                    font=dict(size=12, color=vc4, family="DM Mono"), align="right",
                 )
 
                 fig_scatter.update_layout(
@@ -1177,24 +1145,22 @@ else:
                         font=dict(size=13, color="#111", family="DM Serif Display"), x=0,
                     ),
                     legend=dict(orientation="h", y=1.12, x=0, font_size=11, bgcolor="rgba(0,0,0,0)"),
-                    xaxis=dict(title="Ocupansi (%)", showgrid=True, gridcolor="#F0F0EE",
-                               ticksuffix="%", tickfont_size=11),
-                    yaxis=dict(title="ADR (Juta Rupiah)", showgrid=True, gridcolor="#F0F0EE",
-                               ticksuffix=" Jt", tickfont_size=11, rangemode="tozero"),
+                    xaxis=dict(title="Ocupansi (%)", showgrid=True, gridcolor="#F0F0EE", ticksuffix="%", tickfont_size=11),
+                    yaxis=dict(title="ADR (Juta Rupiah)", showgrid=True, gridcolor="#F0F0EE", ticksuffix=" Jt", tickfont_size=11, rangemode="tozero"),
                 )
-                st.plotly_chart(fig_scatter, width='stretch')
+                st.plotly_chart(fig_scatter, use_container_width=True)
 
                 abs_r = abs(r_val_sc)
                 if abs_r >= 0.7:
-                    corr_strength = "Kuat";              corr_color = "#1A7C44"; corr_bg = "#EDFAF2"; corr_border = "#B2EAC8"; corr_icon = "🔗"
+                    corr_strength, corr_color, corr_bg, corr_border, corr_icon = "Kuat", "#1A7C44", "#EDFAF2", "#B2EAC8", "🔗"
                 elif abs_r >= 0.4:
-                    corr_strength = "Moderat";           corr_color = "#2563EB"; corr_bg = "#EEF3FF"; corr_border = "#C5D7FF"; corr_icon = "〰️"
+                    corr_strength, corr_color, corr_bg, corr_border, corr_icon = "Moderat", "#2563EB", "#EEF3FF", "#C5D7FF", "〰️"
                 elif abs_r >= 0.2:
-                    corr_strength = "Lemah";             corr_color = "#A05C00"; corr_bg = "#FFF8EC"; corr_border = "#FFD88A"; corr_icon = "📉"
+                    corr_strength, corr_color, corr_bg, corr_border, corr_icon = "Lemah", "#A05C00", "#FFF8EC", "#FFD88A", "📉"
                 else:
-                    corr_strength = "Sangat Lemah / Tidak Ada"; corr_color = "#64748b"; corr_bg = "#f1f5f9"; corr_border = "#e2e8f0"; corr_icon = "➖"
+                    corr_strength, corr_color, corr_bg, corr_border, corr_icon = "Sangat Lemah", "#64748b", "#f1f5f9", "#e2e8f0", "➖"
 
-                direction    = "positif — harga naik seiring ocupansi naik" if r_val_sc >= 0 else "negatif — harga turun saat ocupansi naik"
+                direction = "positif — harga naik seiring ocupansi naik" if r_val_sc >= 0 else "negatif — harga turun saat ocupansi naik"
                 adr_med_disp = cd2.get("adr_median", ADR_STATIC.get(vn,{}).get("median_adr", 0))
                 adr_hi_disp  = cd2.get("adr_max",    ADR_STATIC.get(vn,{}).get("adr_max", 0))
                 adr_lo_disp  = cd2.get("adr_min",    ADR_STATIC.get(vn,{}).get("adr_min", 0))
@@ -1205,9 +1171,7 @@ else:
                     <div style='font-family:DM Mono,monospace;font-size:9px;color:{corr_color};text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px'>
                       {corr_icon} Korelasi Pearson
                     </div>
-                    <div style='font-size:26px;font-weight:800;font-family:DM Mono,monospace;color:{corr_color};margin-bottom:4px'>
-                      r = {r_val_sc:+.2f}
-                    </div>
+                    <div style='font-size:26px;font-weight:800;font-family:DM Mono,monospace;color:{corr_color};margin-bottom:4px'>r = {r_val_sc:+.2f}</div>
                     <div style='font-size:12px;font-weight:700;color:{corr_color};margin-bottom:4px'>{corr_strength}</div>
                     <div style='font-size:11px;color:#555;line-height:1.5'>
                       Arah: {direction}<br>
@@ -1217,20 +1181,16 @@ else:
                   </div>
                   <div style='background:#fff;border:1px solid #E8E8E5;border-radius:10px;padding:14px;border-top:3px solid {vc4}'>
                     <div style='font-family:DM Mono,monospace;font-size:9px;color:#aaa;text-transform:uppercase;letter-spacing:.1em;margin-bottom:8px'>Profil Harga</div>
-                    <div style='font-size:22px;font-weight:700;font-family:DM Mono,monospace;color:{vc4};margin-bottom:4px'>
-                      Rp{adr_med_disp:.2f} Juta
-                    </div>
+                    <div style='font-size:22px;font-weight:700;font-family:DM Mono,monospace;color:{vc4};margin-bottom:4px'>Rp{adr_med_disp:.2f} Juta</div>
                     <div style='font-size:11px;color:#888'>Median ADR (hari ada revenue)</div>
-                    <div style='font-size:11px;color:#aaa;margin-top:4px'>
-                      Range: Rp{adr_lo_disp:.2f} Juta – Rp{adr_hi_disp:.2f} Juta
-                    </div>
+                    <div style='font-size:11px;color:#aaa;margin-top:4px'>Range: Rp{adr_lo_disp:.2f} Juta – Rp{adr_hi_disp:.2f} Juta</div>
                   </div>
                 </div>
                 """, unsafe_allow_html=True)
             else:
                 st.info("Data keuangan tidak cukup untuk analisis korelasi.")
 
-# ── Footer ────────────────────────────────────────────────────────────────────
+# ─── FOOTER ───────────────────────────────────────────────────────────────────
 st.markdown("""
 <div style='text-align:center;padding:28px 0 8px;color:#ccc;font-size:11px;
     font-family:DM Mono,monospace;letter-spacing:.08em'>
