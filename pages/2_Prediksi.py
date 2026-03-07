@@ -498,20 +498,23 @@ try:
             bcls, btxt = "warn", "Belum Dilatih"
 
         fc_cached_badge = ""
-        if SARIMA_OK and model_trained and callable(sarima_load_fc_db or None):
+        if SARIMA_OK and model_trained and sarima_load_fc_db is not None and callable(sarima_load_fc_db):
             try:
                 cached_check = sarima_load_fc_db(sel_villa, year=2026)
                 if cached_check is not None and not cached_check.empty:
                     gen_at  = cached_check["generated_at"].iloc[0] if "generated_at" in cached_check.columns else ""
                     fc_cached_badge = f"<span class='cache-badge' style='margin-left:8px'>💾 cached · {str(gen_at)[:16]}</span>"
             except Exception:
-                pass
+                fc_cached_badge = ""
 
-        st.markdown(f"""<div style='padding:10px 0'>
-          <span class='model-badge {bcls}'>{btxt}</span>
-          <span style='font-size:11px;color:#aaa;margin-left:10px;font-family:DM Mono,monospace'>{sel_villa}</span>
-          {fc_cached_badge}
-        </div>""", unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='padding:10px 0'>"
+            f"<span class='model-badge {bcls}'>{btxt}</span>"
+            f"<span style='font-size:11px;color:#aaa;margin-left:10px;font-family:DM Mono,monospace'>{sel_villa}</span>"
+            f"{fc_cached_badge}"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
     with t2:
         train_disabled = not (TRAIN_OK and sarima_train is not None and not model_trained)
