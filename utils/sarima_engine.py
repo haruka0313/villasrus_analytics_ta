@@ -39,14 +39,9 @@ CONFIG = {
     "enforce_stationarity" : False,
     "enforce_invertibility": False,
     # ── Sanity check threshold ─────────────────────────────────────────────────
-    # Forecast dianggap tidak wajar jika:
-    #   - >70% nilai prediksi berada di >= 99% (ceiling)
-    #   - >70% nilai prediksi berada di <= 1%  (floor)
-    #   - std deviasi < 0.02 (flat / tidak bergerak)
-    "sanity_flat_threshold"   : 0.70,   # proporsi nilai ekstrem
-    "sanity_std_threshold"    : 0.02,   # std minimum
+    "sanity_flat_threshold"   : 0.70,
+    "sanity_std_threshold"    : 0.02,
     # ── Ceiling data detection ─────────────────────────────────────────────────
-    # Data villa dianggap "ceiling-dominated" jika >60% hari bernilai 100%
     "ceiling_data_threshold"  : 0.60,
     # ── CI width untuk fallback ────────────────────────────────────────────────
     "fallback_ci_half_width"  : 0.08,
@@ -89,22 +84,9 @@ def _rating(mape_val: float) -> str:
     return "Perlu Revisi ⚠️"
 
 
-# ─── [BARU] DETEKSI DATA CEILING ──────────────────────────────────────────────
+# ─── DETEKSI DATA CEILING ─────────────────────────────────────────────────────
 def _detect_ceiling_data(series_normalized: pd.Series,
                           villa_name: str = "") -> dict:
-    """
-    Deteksi apakah data training didominasi nilai ceiling (mendekati 100%).
-
-    Ini penting karena SARIMA tidak bisa belajar pola variasi
-    jika mayoritas data sudah berada di batas atas (1.0 dalam skala 0-1).
-
-    Returns dict dengan:
-      - is_ceiling_dominated: bool
-      - pct_at_ceiling: float (proporsi nilai >= 0.95)
-      - pct_at_floor:   float (proporsi nilai <= 0.05)
-      - mean_val:       float
-      - std_val:        float
-    """
     pct_ceiling = float((series_normalized >= 0.95).mean())
     pct_floor   = float((series_normalized <= 0.05).mean())
     mean_val    = float(series_normalized.mean())
@@ -113,7 +95,7 @@ def _detect_ceiling_data(series_normalized: pd.Series,
 
     is_ceiling  = pct_ceiling > threshold
     is_floor    = pct_floor   > threshold
-    is_low_var  = std_val < 0.05  # hampir tidak ada variasi sama sekali
+    is_low_var  = std_val < 0.05
 
     print(f"\n  [Ceiling Check — {villa_name}]")
     print(f"    % nilai >= 95% : {pct_ceiling:.1%}  (threshold={threshold:.0%})")
@@ -134,24 +116,9 @@ def _detect_ceiling_data(series_normalized: pd.Series,
     }
 
 
-# ─── [BARU] SANITY CHECK FORECAST ────────────────────────────────────────────
+# ─── SANITY CHECK FORECAST ────────────────────────────────────────────────────
 def _sanity_check_forecast(forecast_series: pd.Series,
                             villa_name: str = "") -> dict:
-    """
-    Periksa apakah hasil forecast wajar atau tidak.
-
-    Forecast dianggap tidak wajar jika:
-    1. Terlalu banyak nilai menempel di ceiling (>=99%)
-    2. Terlalu banyak nilai menempel di floor (<=1%)
-    3. Hampir tidak ada variasi (std < threshold) — forecast flat
-
-    Returns dict dengan:
-      - is_sane:       bool  (True = wajar, False = perlu fallback)
-      - reason:        str   (penjelasan kenapa tidak wajar)
-      - pct_at_ceiling float
-      - pct_at_floor:  float
-      - std_val:       float
-    """
     flat_thr = CONFIG["sanity_flat_threshold"]
     std_thr  = CONFIG["sanity_std_threshold"]
 
@@ -179,73 +146,46 @@ def _sanity_check_forecast(forecast_series: pd.Series,
     print(f"    Hasil           : {'✅ Wajar' if is_sane else f'⚠️  TIDAK WAJAR — {reason}'}")
 
     return {
-        "is_sane"      : is_sane,
-        "reason"       : reason,
+        "is_sane"       : is_sane,
+        "reason"        : reason,
         "pct_at_ceiling": pct_ceiling,
-        "pct_at_floor" : pct_floor,
-        "std_val"      : std_val,
+        "pct_at_floor"  : pct_floor,
+        "std_val"       : std_val,
     }
 
 
-# ─── [BARU] FALLBACK: SEASONAL HISTORICAL AVERAGE ────────────────────────────
+# ─── FALLBACK: SEASONAL HISTORICAL AVERAGE ───────────────────────────────────
 def _build_seasonal_fallback(full_series: pd.Series,
                               forecast_index: pd.DatetimeIndex,
                               villa_name: str = "") -> pd.DataFrame:
-    """
-    Bangun forecast pengganti berbasis rata-rata historis per bulan.
-
-    Ini digunakan sebagai fallback ketika SARIMA menghasilkan forecast
-    yang tidak wajar (flat ceiling, flat floor, atau flat lainnya).
-
-    Prinsip:
-    - Hitung rata-rata & std okupansi per bulan dari data historis
-    - Tambahkan sedikit variasi acak (seed=42) agar tidak terlihat flat
-    - CI dihitung dari std historis per bulan
-    - Pastikan semua nilai dalam range [0.05, 0.97] (menghindari ekstrem)
-
-    Returns DataFrame dengan kolom:
-      predicted_occupancy, lower_bound, upper_bound, fallback (=True)
-    """
     print(f"\n  [Fallback — {villa_name}] Membangun seasonal historical fallback...")
 
-    # Kembalikan ke skala % untuk perhitungan (lebih intuitif)
     hist = full_series.copy()
     if hist.max() <= 1.5:
         hist = hist * 100.0
 
-    # Rata-rata dan std per bulan dari data historis
     hist_monthly_mean = hist.groupby(hist.index.month).mean()
     hist_monthly_std  = hist.groupby(hist.index.month).std().fillna(5.0)
     overall_mean      = float(hist.mean())
     overall_std       = float(hist.std()) if hist.std() > 0 else 10.0
 
     print(f"    Historis: mean={overall_mean:.1f}%, std={overall_std:.1f}%")
-    print(f"    Per bulan:")
-    for m in sorted(hist_monthly_mean.index):
-        print(f"      Bulan {m:2d}: mean={hist_monthly_mean[m]:.1f}%  "
-              f"std={hist_monthly_std.get(m, overall_std):.1f}%")
 
-    # Bangun prediksi per tanggal di forecast_index
     np.random.seed(42)
     predicted = []
     lower     = []
     upper     = []
 
     for date in forecast_index:
-        m        = date.month
-        base     = hist_monthly_mean.get(m, overall_mean)
-        std_m    = hist_monthly_std.get(m, overall_std)
+        m       = date.month
+        base    = hist_monthly_mean.get(m, overall_mean)
+        std_m   = hist_monthly_std.get(m, overall_std)
+        noise   = np.random.normal(0, std_m * 0.30)
+        val_pct = float(np.clip(base + noise, 5.0, 97.0))
+        ci_half = std_m * 1.0
+        lo_pct  = float(np.clip(val_pct - ci_half, 0.0, 100.0))
+        hi_pct  = float(np.clip(val_pct + ci_half, 0.0, 100.0))
 
-        # Sedikit variasi acak agar tidak terlihat flat (30% dari std)
-        noise    = np.random.normal(0, std_m * 0.30)
-        val_pct  = float(np.clip(base + noise, 5.0, 97.0))
-
-        # CI berbasis std historis bulan tersebut
-        ci_half  = std_m * 1.0   # ±1 std historis
-        lo_pct   = float(np.clip(val_pct - ci_half, 0.0, 100.0))
-        hi_pct   = float(np.clip(val_pct + ci_half, 0.0, 100.0))
-
-        # Simpan dalam skala 0-1 (konsisten dengan SARIMA output)
         predicted.append(val_pct / 100.0)
         lower.append(lo_pct     / 100.0)
         upper.append(hi_pct     / 100.0)
@@ -266,22 +206,11 @@ def _build_seasonal_fallback(full_series: pd.Series,
 
 # ─── DETEKSI m DARI ACF ───────────────────────────────────────────────────────
 def _detect_m_from_acf(train: pd.Series, villa_name: str = "") -> int:
-    """
-    Deteksi seasonal period dominan dari ACF secara otomatis.
-
-    Logika:
-    - Cek kandidat lag: 4, 12, 26, 52
-    - Hitung ACF di tiap kandidat lag
-    - Ambil lag dengan ACF tertinggi yang signifikan (> threshold Bartlett)
-    - Kalau tidak ada yang signifikan, fallback ke 4
-    """
     candidates = [4, 12, 26, 52]
     n          = len(train)
-
-    max_lag  = min(max(candidates) + 1, n // 2)
-    acf_vals = acf(train, nlags=max_lag, fft=True)
-
-    threshold = 1.96 / np.sqrt(n)
+    max_lag    = min(max(candidates) + 1, n // 2)
+    acf_vals   = acf(train, nlags=max_lag, fft=True)
+    threshold  = 1.96 / np.sqrt(n)
 
     best_m   = 4
     best_val = 0.0
@@ -306,17 +235,6 @@ def _detect_m_smart(train: pd.Series,
                     n_train: int,
                     villa_name: str = "",
                     max_m: int = 52) -> tuple:
-    """
-    Deteksi m secara cerdas: rule-of-thumb (dari panjang data) + validasi ACF.
-
-    Prinsip utama:
-    - Butuh MINIMAL 2 siklus penuh agar SARIMA bisa estimasi seasonal dengan stabil
-    - Idealnya 3 siklus (contoh: m=52 butuh 156 minggu = 3 tahun data)
-    - Kalau data kurang dari 2 siklus untuk m tertentu → turunkan m
-    - ACF memvalidasi apakah pola seasonal memang ada di data atau tidak
-
-    Returns: (m_used, D_used, n_cycles)
-    """
     print(f"\n  Deteksi m otomatis [{villa_name}]:")
     print(f"  n_train={n_train} minggu "
           f"= {n_train/52:.1f} tahun = {n_train/26:.1f} semester "
@@ -327,7 +245,7 @@ def _detect_m_smart(train: pd.Series,
     print(f"\n  Ketersediaan siklus historis:")
     cycle_info = {}
     for m in candidates:
-        n_cyc  = n_train / m
+        n_cyc = n_train / m
         cycle_info[m] = n_cyc
         status = "✅ ideal" if n_cyc >= 3 else "⚠️  minimum" if n_cyc >= 2 else "❌ kurang"
         print(f"    m={m:2d}: {n_cyc:.1f} siklus {status}")
@@ -409,11 +327,7 @@ def fit_sarima(series: pd.Series,
           f"(n={n_test})")
     print(f"  Skala data : {s.min():.4f} – {s.max():.4f}")
 
-    # ── [BARU] 3b. Ceiling data check ────────────────────────────
-    # Deteksi sejak dini apakah data didominasi ceiling/floor.
-    # Ini tidak menghentikan proses training, tapi hasilnya
-    # disimpan di metadata agar bisa jadi sinyal di UI dan
-    # digunakan oleh sanity check saat forecast.
+    # ── 3b. Ceiling data check ────────────────────────────────────
     ceiling_info = _detect_ceiling_data(s, villa_name)
 
     # ── 4. Deteksi m otomatis ─────────────────────────────────────
@@ -493,12 +407,7 @@ def fit_sarima(series: pd.Series,
     aic = results.aic
     print(f"  AIC (normalized scale) : {aic:.2f}")
 
-    # ── [BARU] AIC display: skala asli (persen, bukan 0-1) ───────
-    # AIC dihitung dari data ternormalisasi (0-1), sehingga nilainya
-    # jauh lebih kecil dari referensi literatur yang pakai skala %.
-    # Kita simpan versi "display" agar UI tidak membingungkan.
-    # Rumus aproksimasi: AIC_pct ≈ AIC_norm + 2 * n_train * log(100)
-    # karena log-likelihood berubah sebesar n*log(scale_factor)
+    # AIC display: skala aproksimasi persen
     aic_display = aic + 2 * n_train * np.log(100)
     print(f"  AIC (display, ~pct scale): {aic_display:.0f}")
 
@@ -507,10 +416,9 @@ def fit_sarima(series: pd.Series,
     y_true        = test.values
     y_pred        = forecast_vals.values
 
-    # Metrics dalam skala PERSEN (lebih intuitif di UI)
     mae_pct  = _mae(y_true * 100, y_pred * 100)
     rmse_pct = _rmse(y_true * 100, y_pred * 100)
-    mape_val = _mape(y_true, y_pred)   # MAPE tidak terpengaruh skala
+    mape_val = _mape(y_true, y_pred)
 
     print(f"\n  📊 Test Set (skala %): "
           f"MAE={mae_pct:.2f}pp | RMSE={rmse_pct:.2f}pp | MAPE={mape_val:.2f}%")
@@ -525,20 +433,19 @@ def fit_sarima(series: pd.Series,
         'seasonal_order'     : s_order,
         'm_used'             : m_used,
         'n_cycles'           : round(n_cycles, 2),
-        'aic'                : aic_display,   # ← display version (approx pct scale)
-        'aic_raw'            : aic,           # ← raw (normalized scale, untuk internal)
+        'aic'                : aic_display,
+        'aic_raw'            : aic,
         'mae'                : mae_pct,
         'rmse'               : rmse_pct,
         'mape'               : mape_val,
         'series'             : s,
         'rating'             : _rating(mape_val),
-        'ceiling_info'       : ceiling_info,  # ← [BARU] info ceiling/floor detection
+        'ceiling_info'       : ceiling_info,
     }
 
 
 # ─── DB: SAVE MODEL ───────────────────────────────────────────────────────────
 def save_model_to_db(villa_name: str, model, meta_data: dict, series) -> bool:
-    """Simpan model + meta ke TiDB sebagai BLOB."""
     model_buffer = io.BytesIO()
     meta_buffer  = io.BytesIO()
     joblib.dump(model, model_buffer, compress=("zlib", 6))
@@ -547,6 +454,11 @@ def save_model_to_db(villa_name: str, model, meta_data: dict, series) -> bool:
     model_bytes = model_buffer.getvalue()
     meta_bytes  = meta_buffer.getvalue()
 
+    order          = meta_data.get("order", ())
+    seasonal_order = meta_data.get("seasonal_order", ())
+    order_str      = f"({','.join(str(x) for x in order)})" if order else None
+    seas_str       = f"({','.join(str(x) for x in seasonal_order)})" if seasonal_order else None
+
     conn = get_conn()
     if not conn:
         return False
@@ -554,22 +466,33 @@ def save_model_to_db(villa_name: str, model, meta_data: dict, series) -> bool:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO sarima_models
-                (villa_name, model_blob, meta_blob, mape, rmse, aic)
-            VALUES (%s, %s, %s, %s, %s, %s)
+                (villa_name, model_blob, meta_blob, mape, rmse, aic,
+                 arima_order, seasonal_order, m_used, n_train, n_cycles)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON DUPLICATE KEY UPDATE
-                model_blob = VALUES(model_blob),
-                meta_blob  = VALUES(meta_blob),
-                mape       = VALUES(mape),
-                rmse       = VALUES(rmse),
-                aic        = VALUES(aic),
-                trained_at = NOW()
+                model_blob     = VALUES(model_blob),
+                meta_blob      = VALUES(meta_blob),
+                mape           = VALUES(mape),
+                rmse           = VALUES(rmse),
+                aic            = VALUES(aic),
+                arima_order    = VALUES(arima_order),
+                seasonal_order = VALUES(seasonal_order),
+                m_used         = VALUES(m_used),
+                n_train        = VALUES(n_train),
+                n_cycles       = VALUES(n_cycles),
+                trained_at     = NOW()
         """, (
             villa_name,
             model_bytes,
             meta_bytes,
             meta_data.get("mape"),
             meta_data.get("rmse"),
-            meta_data.get("aic"),   # aic_display yang disimpan ke DB
+            meta_data.get("aic"),
+            order_str,
+            seas_str,
+            meta_data.get("m_used"),
+            meta_data.get("n_train"),
+            meta_data.get("n_cycles"),
         ))
         conn.commit()
         cursor.close()
@@ -582,7 +505,6 @@ def save_model_to_db(villa_name: str, model, meta_data: dict, series) -> bool:
 
 # ─── DB: LOAD MODEL ───────────────────────────────────────────────────────────
 def load_model_from_db(villa_name: str) -> tuple:
-    """Load model + meta dari TiDB. Returns (model, meta_data) atau (None, None)."""
     conn = get_conn()
     if not conn:
         return None, None
@@ -744,14 +666,19 @@ def forecast(villa_name: str,
     """
     Generate forecast untuk villa_name hingga target_end_date.
 
-    Alur lengkap:
+    FIX: Filter tanggal sekarang berbasis range (fc_start → target_end_date)
+    bukan hanya year == target_year, sehingga tidak error ketika last_date
+    sudah berada di tahun target.
+
+    Alur:
     1. Load model dari disk / DB
-    2. Hitung steps yang dibutuhkan
+    2. Hitung steps yang dibutuhkan (minimal horizon, minimal 26 minggu)
     3. Generate forecast SARIMA
-    4. Filter ke range tanggal yang diminta
-    5. [BARU] Sanity check — apakah hasil forecast wajar?
-    6. [BARU] Kalau tidak wajar → fallback ke seasonal historical average
-    7. Return DataFrame dengan kolom standar + kolom 'fallback' (bool)
+    4. Filter ke range [awal_tahun_target, target_end_date]
+       → fallback: ambil semua forecast jika filter kosong
+    5. Sanity check — apakah hasil forecast wajar?
+    6. Kalau tidak wajar → fallback ke seasonal historical average
+    7. Return DataFrame standar
     """
     pkl  = _pkl_path(villa_name)
     meta = _meta_path(villa_name)
@@ -773,11 +700,22 @@ def forecast(villa_name: str,
 
         last_date   = full_series.index.max()
         target_date = pd.Timestamp(target_end_date)
+        target_year = target_date.year
 
-        weeks_difference = (target_date - last_date).days / 7
-        weeks_to_predict = int(np.ceil(weeks_difference))
-        if weeks_to_predict < horizon:
-            weeks_to_predict = horizon
+        # ── FIX: Hitung weeks_to_predict dengan aman ─────────────
+        # Pastikan kita selalu generate cukup minggu ke depan
+        # agar window tahun target pasti tercakup.
+        weeks_to_end  = max(int(np.ceil((target_date - last_date).days / 7)), 0)
+
+        # Kalau last_date sudah MELEWATI target_end_date,
+        # kita tetap generate minimal horizon minggu ke depan
+        # dan filter dari awal tahun target.
+        weeks_to_predict = max(weeks_to_end, horizon, 26)
+
+        print(f"\n[Forecast — {villa_name}]")
+        print(f"  last_date       : {last_date.date()}")
+        print(f"  target_end_date : {target_date.date()}")
+        print(f"  weeks_to_predict: {weeks_to_predict}")
 
         # ── Generate SARIMA forecast ──────────────────────────────
         forecast_obj  = model.get_forecast(steps=weeks_to_predict)
@@ -796,26 +734,28 @@ def forecast(villa_name: str,
             'upper_bound'        : forecast_ci.iloc[:, 1].values.clip(0, 1),
         }, index=forecast_dates)
 
-        # ── Filter ke range tahun target ─────────────────────────
-        target_year  = target_date.year
-        target_month = target_date.month
-        mask = (
-            (forecast_df.index.year == target_year) &
-            (forecast_df.index.month >= 1) &
-            (forecast_df.index.month <= target_month)
-        )
-        forecast_2026 = forecast_df[mask].copy()
+        # ── FIX: Filter berbasis range tanggal, bukan hanya year ──
+        # Ambil semua forecast dalam window [1 Jan target_year, target_end_date]
+        fc_start = pd.Timestamp(f"{target_year}-01-01")
+        mask     = (forecast_df.index >= fc_start) & (forecast_df.index <= target_date)
+        forecast_filtered = forecast_df[mask].copy()
 
-        if len(forecast_2026) == 0:
+        # Kalau window itu kosong (misal last_date sudah di 2027),
+        # ambil saja semua forecast yang ada agar UI tetap bisa tampil.
+        if len(forecast_filtered) == 0:
+            print(f"  ⚠️  Window {fc_start.date()}–{target_date.date()} kosong, "
+                  f"pakai semua {len(forecast_df)} baris forecast.")
+            forecast_filtered = forecast_df.copy()
+
+        if len(forecast_filtered) == 0:
             return pd.DataFrame({"error": [
-                "Tidak ada data untuk range tanggal yang diminta."
+                "Tidak ada data forecast yang bisa di-generate. "
+                "Pastikan data training cukup."
             ]})
 
-        # ── [BARU] Sanity check forecast ──────────────────────────
-        # Periksa apakah hasil SARIMA wajar sebelum dikembalikan ke UI.
-        # Kalau tidak wajar, ganti dengan fallback berbasis historis.
+        # ── Sanity check forecast ─────────────────────────────────
         sanity = _sanity_check_forecast(
-            forecast_2026["predicted_occupancy"], villa_name
+            forecast_filtered["predicted_occupancy"], villa_name
         )
 
         if not sanity["is_sane"]:
@@ -824,28 +764,36 @@ def forecast(villa_name: str,
 
             fallback_df = _build_seasonal_fallback(
                 full_series,
-                forecast_2026.index,
+                forecast_filtered.index,
                 villa_name,
             )
-            # Ganti kolom forecast dengan fallback, pertahankan index
-            forecast_2026["predicted_occupancy"] = fallback_df["predicted_occupancy"].values
-            forecast_2026["lower_bound"]         = fallback_df["lower_bound"].values
-            forecast_2026["upper_bound"]         = fallback_df["upper_bound"].values
-            forecast_2026["fallback"]            = True
-            forecast_2026["fallback_reason"]     = sanity["reason"]
+            forecast_filtered["predicted_occupancy"] = fallback_df["predicted_occupancy"].values
+            forecast_filtered["lower_bound"]         = fallback_df["lower_bound"].values
+            forecast_filtered["upper_bound"]         = fallback_df["upper_bound"].values
+            forecast_filtered["fallback"]            = True
+            forecast_filtered["fallback_reason"]     = sanity["reason"]
         else:
-            forecast_2026["fallback"]        = False
-            forecast_2026["fallback_reason"] = ""
+            forecast_filtered["fallback"]        = False
+            forecast_filtered["fallback_reason"] = ""
 
         # ── Tambah kolom label ────────────────────────────────────
-        forecast_2026["week"]      = [f"W{i+1}" for i in range(len(forecast_2026))]
-        forecast_2026["month"]     = forecast_2026.index.strftime("%b %Y")
-        forecast_2026["month_num"] = forecast_2026.index.month
-        forecast_2026.index.name   = "date"
+        forecast_filtered["week"]      = [f"W{i+1}" for i in range(len(forecast_filtered))]
+        forecast_filtered["month"]     = forecast_filtered.index.strftime("%b %Y")
+        forecast_filtered["month_num"] = forecast_filtered.index.month
+        forecast_filtered.index.name   = "date"
 
-        return forecast_2026
+        print(f"  ✅ Forecast selesai: {len(forecast_filtered)} minggu "
+              f"({forecast_filtered.index[0].date()} → "
+              f"{forecast_filtered.index[-1].date()})")
+        print(f"     mean prediksi : "
+              f"{forecast_filtered['predicted_occupancy'].mean()*100:.1f}%")
+
+        return forecast_filtered
 
     except Exception as e:
+        import traceback
+        print(f"❌ forecast() exception: {e}")
+        print(traceback.format_exc())
         return pd.DataFrame({"error": [str(e)]})
 
 
@@ -865,10 +813,8 @@ def predict_2026(sarima_result: dict, villa_name: str) -> dict:
     last_date   = full_series.index.max()
     target_date = pd.Timestamp('2026-06-30')
 
-    weeks_difference = (target_date - last_date).days / 7
-    weeks_to_predict = int(np.ceil(weeks_difference))
-    if weeks_to_predict < 26:
-        weeks_to_predict = 26
+    weeks_to_end     = max(int(np.ceil((target_date - last_date).days / 7)), 0)
+    weeks_to_predict = max(weeks_to_end, 26)
 
     print(f"\n{'='*70}")
     print(f"PREDIKSI 2026 (Jan-Jun): {villa_name}")
@@ -897,18 +843,19 @@ def predict_2026(sarima_result: dict, villa_name: str) -> dict:
         'upper_bound'        : forecast_ci.iloc[:, 1].values.clip(0, 1),
     }, index=forecast_dates)
 
-    mask_2026 = (
-        (forecast_df.index.year == 2026) &
-        (forecast_df.index.month >= 1) &
-        (forecast_df.index.month <= 6)
-    )
+    # FIX: Filter berbasis range, bukan hanya year == 2026
+    fc_start  = pd.Timestamp("2026-01-01")
+    mask_2026 = (forecast_df.index >= fc_start) & (forecast_df.index <= target_date)
     forecast_2026 = forecast_df[mask_2026].copy()
 
     if len(forecast_2026) == 0:
-        print("⚠️ WARNING: Tidak ada data 2026 yang ter-generate!")
+        print("⚠️ WARNING: Tidak ada data 2026 yang ter-generate, pakai semua baris.")
+        forecast_2026 = forecast_df.copy()
+
+    if len(forecast_2026) == 0:
         return None
 
-    # ── [BARU] Sanity check di predict_2026 juga ─────────────────
+    # Sanity check
     sanity = _sanity_check_forecast(
         forecast_2026["predicted_occupancy"], villa_name
     )
@@ -920,7 +867,7 @@ def predict_2026(sarima_result: dict, villa_name: str) -> dict:
         forecast_2026["predicted_occupancy"] = fallback_df["predicted_occupancy"].values
         forecast_2026["lower_bound"]         = fallback_df["lower_bound"].values
         forecast_2026["upper_bound"]         = fallback_df["upper_bound"].values
-        forecast_2026["fallback"]            = True
+        forecast_2026["fallback"] = True
     else:
         forecast_2026["fallback"] = False
 
@@ -992,7 +939,6 @@ def get_all_meta(villa_names: list) -> pd.DataFrame:
     for name in villa_names:
         meta = get_meta(name)
         if meta:
-            # Ambil ceiling_info kalau ada
             ceiling_info = meta.get("ceiling_info", {})
             rows.append({
                 "Vila"             : name,
@@ -1000,7 +946,7 @@ def get_all_meta(villa_names: list) -> pd.DataFrame:
                 "Seasonal Order"   : str(meta.get("seasonal_order", "-")),
                 "m digunakan"      : meta.get("m_used", "-"),
                 "Siklus"           : meta.get("n_cycles", "-"),
-                "AIC"              : meta.get("aic", "-"),       # display version
+                "AIC"              : meta.get("aic", "-"),
                 "MAE"              : meta.get("mae", "-"),
                 "RMSE"             : meta.get("rmse", "-"),
                 "MAPE (%)"         : meta.get("mape", "-"),

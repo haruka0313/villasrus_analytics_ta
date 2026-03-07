@@ -569,13 +569,12 @@ def get_sarima_model(villa_name: str):
         "SELECT * FROM sarima_models WHERE villa_name=%s", (villa_name,)
     )
 
-
 def get_all_sarima_models():
     return run_query(
-        "SELECT villa_name, mape, rmse, aic, trained_at "
+        "SELECT villa_name, arima_order, seasonal_order, m_used, "
+        "n_train, n_cycles, mape, rmse, aic, trained_at "
         "FROM sarima_models ORDER BY villa_name"
     )
-
 
 def delete_sarima_model(villa_name: str):
     return run_query(

@@ -322,7 +322,6 @@ with e4:
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("<hr class='rule'>", unsafe_allow_html=True)
 
-# Villa selector
 cc1, cc2 = st.columns([2.5, 4])
 with cc1:
     sel_villa = st.selectbox("Vila", villa_names, label_visibility="collapsed", key="sv")
@@ -413,9 +412,9 @@ with t4:
 # ══════════════════════════════════════════════════════════════════════════════
 # GENERATE FORECAST
 # ══════════════════════════════════════════════════════════════════════════════
-FC_START    = "2026-01-01"
 fc_df       = pd.DataFrame()
 using_real  = False
+is_fallback = False   # FIX: track apakah SARIMA pakai seasonal fallback
 model_mape  = None
 
 if SARIMA_OK and model_trained:
@@ -423,20 +422,32 @@ if SARIMA_OK and model_trained:
         raw_fc = sarima_forecast(sel_villa, horizon=fc_horizon_weeks, target_end_date="2026-06-30")
         if raw_fc is not None and not raw_fc.empty and "error" not in raw_fc.columns:
             if "predicted_occupancy" in raw_fc.columns:
+                # FIX: pastikan index adalah DatetimeIndex sebelum akses .month / .strftime
+                if not isinstance(raw_fc.index, pd.DatetimeIndex):
+                    raw_fc = raw_fc.set_index("date")
+
+                # FIX: cek kolom fallback dari sarima_engine
+                if "fallback" in raw_fc.columns:
+                    is_fallback = bool(raw_fc["fallback"].any())
+
                 raw_fc["predicted"]  = (raw_fc["predicted_occupancy"] * 100).round(1)
                 raw_fc["lower"]      = (raw_fc["lower_bound"] * 100).round(1)
                 raw_fc["upper"]      = (raw_fc["upper_bound"] * 100).round(1)
                 raw_fc["month_num"]  = raw_fc.index.month
                 raw_fc["month"]      = raw_fc.index.strftime("%b %Y")
                 raw_fc               = raw_fc.reset_index()
+
                 fc_df = (
                     raw_fc.groupby(["month","month_num"])
                     .agg(predicted=("predicted","mean"), lower=("lower","min"), upper=("upper","max"))
                     .reset_index()
                 )
-                fc_df["date"] = pd.to_datetime([f"2026-{m:02d}-01" for m in fc_df["month_num"]])
+
+                # FIX: ambil tanggal dari label "month" yang sudah benar, bukan hardcode 2026
+                fc_df["date"] = pd.to_datetime(fc_df["month"], format="%b %Y")
                 fc_df         = fc_df.sort_values("month_num").reset_index(drop=True)
                 using_real    = True
+
                 if sarima_get_meta:
                     try: model_mape = sarima_get_meta(sel_villa).get("mape")
                     except Exception: pass
@@ -446,46 +457,7 @@ if SARIMA_OK and model_trained:
     except Exception as ex:
         st.warning(f"Forecast error: {ex}. Menggunakan Seasonal Naive.")
 
-# ── Seasonal Naive fallback ───────────────────────────────────────────────────
-if fc_df.empty:
-    vd_naive          = df_occ[df_occ["villa_name"] == sel_villa].copy()
-    vd_naive["date"]  = pd.to_datetime(vd_naive["date"])
-    vd_naive_weekly   = vd_naive.set_index("date").resample("W")["occupancy_pct"].mean()
-    weekly_avg_by_month = vd_naive_weekly.groupby(vd_naive_weekly.index.month).mean().to_dict()
-    overall_avg_naive   = vd_naive_weekly.mean() if len(vd_naive_weekly) > 0 else 70.0
-
-    rows_fc_weekly = []
-    for d in pd.date_range(FC_START, end="2026-06-30", freq="W"):
-        pred = float(np.clip(weekly_avg_by_month.get(d.month, overall_avg_naive), 0, 100))
-        ci   = pred * 0.10
-        rows_fc_weekly.append({"date": d, "month": d.strftime("%b %Y"), "month_num": d.month,
-                                "predicted": round(pred,1), "upper": round(min(100,pred+ci),1),
-                                "lower": round(max(0,pred-ci),1)})
-
-    fc_df_weekly = pd.DataFrame(rows_fc_weekly)
-    fc_df = (
-        fc_df_weekly.groupby(["month","month_num"])
-        .agg({"predicted":"mean","lower":"min","upper":"max"})
-        .reset_index()
-    )
-    fc_df["date"] = pd.to_datetime([f"2026-{m:02d}-01" for m in fc_df["month_num"]])
-    fc_df         = fc_df.sort_values("month_num").reset_index(drop=True)
-
-if "date" not in fc_df.columns:
-    fc_df["date"] = pd.to_datetime([f"2026-{i+1:02d}-01" for i in range(len(fc_df))])
-if "month_num" not in fc_df.columns:
-    fc_df["month_num"] = pd.to_datetime(fc_df["date"]).dt.month
-
-# ── Historis ──────────────────────────────────────────────────────────────────
-vd_hist      = df_occ[df_occ["villa_name"] == sel_villa].copy()
-hist_occ_avg = vd_hist["occupancy_pct"].mean() if not vd_hist.empty else 70.0
-hist_by_mnum = (
-    vd_hist.groupby("month_num")["occupancy_pct"]
-    .agg(hist_avg="mean", hist_max="max", hist_min="min")
-    .reset_index()
-)
-
-# ── Filter aktual 2026 ────────────────────────────────────────────────────────
+# ── Filter aktual 2026 (harus sebelum Seasonal Naive agar FC_START bisa pakai info ini)
 actual_2026_raw = df_occ[
     (df_occ["villa_name"] == sel_villa) & (df_occ["year"] == 2026)
 ].copy()
@@ -504,10 +476,73 @@ if not actual_2026_raw.empty:
 
 has_actual = not actual_monthly.empty
 
+# ── Seasonal Naive fallback ───────────────────────────────────────────────────
+if fc_df.empty:
+    # FIX: FC_START mulai setelah bulan aktual terakhir, hindari overlap
+    if has_actual:
+        last_actual_month = int(actual_monthly["month_num"].max())
+        next_month        = last_actual_month + 1
+        if next_month > 12:
+            FC_START = "2027-01-01"
+        else:
+            FC_START = f"2026-{next_month:02d}-01"
+    else:
+        FC_START = "2026-01-01"
+
+    vd_naive            = df_occ[df_occ["villa_name"] == sel_villa].copy()
+    vd_naive["date"]    = pd.to_datetime(vd_naive["date"])
+    vd_naive_weekly     = vd_naive.set_index("date").resample("W")["occupancy_pct"].mean()
+    weekly_avg_by_month = vd_naive_weekly.groupby(vd_naive_weekly.index.month).mean().to_dict()
+    overall_avg_naive   = vd_naive_weekly.mean() if len(vd_naive_weekly) > 0 else 70.0
+
+    rows_fc_weekly = []
+    for d in pd.date_range(FC_START, end="2026-06-30", freq="W"):
+        pred = float(np.clip(weekly_avg_by_month.get(d.month, overall_avg_naive), 0, 100))
+        ci   = pred * 0.10
+        rows_fc_weekly.append({
+            "date": d, "month": d.strftime("%b %Y"), "month_num": d.month,
+            "predicted": round(pred,1), "upper": round(min(100,pred+ci),1),
+            "lower": round(max(0,pred-ci),1),
+        })
+
+    if rows_fc_weekly:
+        fc_df_weekly = pd.DataFrame(rows_fc_weekly)
+        fc_df = (
+            fc_df_weekly.groupby(["month","month_num"])
+            .agg({"predicted":"mean","lower":"min","upper":"max"})
+            .reset_index()
+        )
+        # FIX: ambil dari label month, bukan hardcode 2026
+        fc_df["date"] = pd.to_datetime(fc_df["month"], format="%b %Y")
+        fc_df         = fc_df.sort_values("month_num").reset_index(drop=True)
+    else:
+        fc_df = pd.DataFrame()
+
+if not fc_df.empty:
+    if "date" not in fc_df.columns:
+        fc_df["date"] = pd.to_datetime(fc_df["month"], format="%b %Y")
+    if "month_num" not in fc_df.columns:
+        fc_df["month_num"] = pd.to_datetime(fc_df["date"]).dt.month
+
+# ── Historis ──────────────────────────────────────────────────────────────────
+vd_hist      = df_occ[df_occ["villa_name"] == sel_villa].copy()
+hist_occ_avg = vd_hist["occupancy_pct"].mean() if not vd_hist.empty else 70.0
+hist_by_mnum = (
+    vd_hist.groupby("month_num")["occupancy_pct"]
+    .agg(hist_avg="mean", hist_max="max", hist_min="min")
+    .reset_index()
+)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 3 — PREDIKSI VS AKTUAL CHART
 # ══════════════════════════════════════════════════════════════════════════════
 st.markdown("<hr class='rule'>", unsafe_allow_html=True)
+
+# Label model untuk display
+if using_real:
+    model_label = "SARIMA (Seasonal Fallback)" if is_fallback else "SARIMA"
+else:
+    model_label = "Seasonal Naive"
 
 if has_actual:
     covered = len(actual_monthly)
@@ -516,10 +551,10 @@ if has_actual:
 <div style='background:#EEF3FF;border:1px solid #C5D7FF;border-radius:10px;
      padding:10px 16px;margin-bottom:14px;font-size:12px;color:#1d4ed8'>
   ✅ <b>Data aktual tersedia</b> — {covered} bulan sudah ter-upload &nbsp;·&nbsp;
-  Garis oranye = realisasi &nbsp;·&nbsp; Garis biru = prediksi {'SARIMA' if using_real else 'Seasonal Naive'}
+  Garis oranye = realisasi &nbsp;·&nbsp; Garis biru = prediksi {model_label}
 </div>""", unsafe_allow_html=True)
 else:
-    st.markdown("""
+    st.markdown(f"""
 <div class='section-label'>Prediksi Okupansi 2026</div>
 <div style='background:#FFF8EC;border:1px solid #FFD88A;border-radius:10px;
      padding:10px 16px;margin-bottom:14px;font-size:12px;color:#A05C00'>
@@ -527,9 +562,19 @@ else:
   untuk melihat perbandingan prediksi vs realisasi secara langsung
 </div>""", unsafe_allow_html=True)
 
+# FIX: tampilkan banner khusus jika SARIMA pakai seasonal fallback
+if using_real and is_fallback:
+    st.markdown("""
+<div style='background:#FFF8EC;border:1px solid #FFD88A;border-radius:10px;
+     padding:10px 16px;margin-bottom:14px;font-size:12px;color:#A05C00'>
+  ⚠️ <b>SARIMA Seasonal Fallback aktif</b> — Model mendeteksi forecast tidak wajar
+  (flat ceiling / floor / tidak bergerak), diganti otomatis dengan rata-rata historis musiman.
+  Pertimbangkan <b>Retrain</b> model dengan data terbaru.
+</div>""", unsafe_allow_html=True)
+
 fig_occ = go.Figure()
 
-if show_ci and not fc_df.empty:
+if not fc_df.empty and show_ci:
     r_, g_, b_ = safe_hex(vc)
     fig_occ.add_trace(go.Scatter(
         x=list(fc_df["month"]) + list(fc_df["month"][::-1]),
@@ -542,7 +587,7 @@ if not fc_df.empty:
     fig_occ.add_trace(go.Scatter(
         x=fc_df["month"], y=fc_df["predicted"],
         mode="lines+markers",
-        name=f"Prediksi {'SARIMA' if using_real else 'Seasonal Naive'}",
+        name=f"Prediksi {model_label}",
         line=dict(color=vc, width=3),
         marker=dict(size=10, symbol="diamond", color=vc, line=dict(color="#F7F7F5", width=2)),
         hovertemplate="<b>%{x}</b><br>Prediksi: %{y:.1f}%<extra></extra>",
@@ -557,6 +602,14 @@ if has_actual:
         hovertemplate="<b>%{x}</b><br>Aktual: %{y:.1f}%<extra></extra>",
     ))
 
+# FIX: categoryarray gabungkan bulan prediksi + bulan aktual
+# agar titik aktual tidak hilang dari chart
+all_chart_months = sorted(
+    set(list(fc_df["month"] if not fc_df.empty else []))
+    | set(list(actual_monthly["month"]) if has_actual else []),
+    key=lambda x: pd.Timestamp(x),
+)
+
 fig_occ.update_layout(
     **LAYOUT, height=380, margin=dict(l=0, r=0, t=60, b=40),
     title=dict(
@@ -565,8 +618,12 @@ fig_occ.update_layout(
         x=0, xanchor="left", y=0.97, yanchor="top",
     ),
     legend=dict(orientation="h", y=1.15, x=0, xanchor="left", font_size=12, bgcolor="rgba(0,0,0,0)"),
-    xaxis=dict(showgrid=False, tickangle=-35, tickfont_size=11, linecolor="#E8E8E5",
-               type="category", categoryorder="array", categoryarray=list(fc_df["month"])),
+    xaxis=dict(
+        showgrid=False, tickangle=-35, tickfont_size=11, linecolor="#E8E8E5",
+        type="category", categoryorder="array",
+        # FIX: pakai all_chart_months bukan hanya fc_df["month"]
+        categoryarray=all_chart_months,
+    ),
     yaxis=dict(showgrid=True, gridcolor="#F0F0EE", ticksuffix="%", range=[0,110], tickfont_size=11),
 )
 st.plotly_chart(fig_occ, width='stretch')
@@ -580,7 +637,7 @@ st.markdown("<div class='section-label'>Prediksi Okupansi Per Bulan 2026</div>",
 st.markdown(f"""
 <div style='background:#F5F7FF;border:1px solid #D8E0FF;border-radius:10px;padding:12px 16px;
      margin-bottom:16px;font-size:12px;color:#3D5BC0'>
-  <b>📐 Model:</b> {'SARIMA' if using_real else 'Seasonal Naive'} &nbsp;|&nbsp;
+  <b>📐 Model:</b> {model_label} &nbsp;|&nbsp;
   <b>Vila:</b> {sel_villa} &nbsp;|&nbsp;
   <b>S = 52</b> (tahunan pada data mingguan) &nbsp;|&nbsp;
   <b>Horizon:</b> {fc_horizon_months} bulan ({fc_horizon_weeks} minggu prediksi)
@@ -594,17 +651,17 @@ if not fc_df.empty:
     else:
         tbl_df["actual"] = np.nan
 
-    rows_html = ""
+    rows_html  = ""
     cards_html = ""
 
     for _, row in tbl_df.iterrows():
-        occ_pred      = float(row["predicted"])
-        month_label   = row["month"]
-        actual_val    = row.get("actual", np.nan)
+        occ_pred       = float(row["predicted"])
+        month_label    = row["month"]
+        actual_val     = row.get("actual", np.nan)
         has_row_actual = not pd.isna(actual_val)
 
         oc    = "#1A7C44" if occ_pred >= 80 else "#A05C00" if occ_pred >= 50 else "#C0392B"
-        bar_w = int(occ_pred)
+        bar_w = int(min(occ_pred, 100))
 
         if has_row_actual:
             err_val   = float(actual_val) - occ_pred
@@ -657,7 +714,7 @@ if not fc_df.empty:
           <th style='width:22%'>Bulan</th>
           <th style='width:48%'>Prediksi Okupansi
             <span style='font-weight:400;text-transform:none;letter-spacing:0;font-size:9px;margin-left:6px'>
-              {'SARIMA' if using_real else 'Seasonal Naive'}
+              {model_label}
             </span>
           </th>
           <th style='width:30%'>Aktual 2026
@@ -687,90 +744,91 @@ if has_actual and not fc_df.empty:
     eval_df["abs_error"] = eval_df["error"].abs()
     eval_df["ape"]       = (eval_df["abs_error"] / eval_df["actual"].replace(0, np.nan) * 100).round(2)
 
-    mae_live  = eval_df["abs_error"].mean()
-    mape_live = eval_df["ape"].mean()
-    rmse_live = float(np.sqrt((eval_df["error"] ** 2).mean()))
-    bias      = eval_df["error"].mean()
+    if not eval_df.empty:
+        mae_live  = eval_df["abs_error"].mean()
+        mape_live = eval_df["ape"].mean()
+        rmse_live = float(np.sqrt((eval_df["error"] ** 2).mean()))
+        bias      = eval_df["error"].mean()
 
-    st.markdown("<hr class='rule'>", unsafe_allow_html=True)
-    st.markdown("<div class='section-label'>📐 Evaluasi Akurasi — Prediksi vs Aktual 2026</div>", unsafe_allow_html=True)
-    st.markdown(
-        f"<p style='font-size:12px;color:#888;margin-bottom:16px'>"
-        f"Dihitung dari <b>{len(eval_df)} bulan</b> yang sudah tersedia data aktualnya.</p>",
-        unsafe_allow_html=True,
-    )
-
-    ka, kb, kc, kd = st.columns(4)
-    for col, label, val, note, color in [
-        (ka, "MAPE Aktual", f"{mape_live:.1f}%", "< 10% Sangat Baik · < 20% Baik",
-         "#1A7C44" if mape_live < 10 else "#A05C00" if mape_live < 20 else "#C0392B"),
-        (kb, "MAE",  f"{mae_live:.1f}pp",  "Mean Absolute Error (poin persen)",
-         "#1A7C44" if mae_live < 5 else "#A05C00" if mae_live < 15 else "#C0392B"),
-        (kc, "RMSE", f"{rmse_live:.1f}pp", "Root Mean Squared Error",
-         "#1A7C44" if rmse_live < 5 else "#A05C00" if rmse_live < 15 else "#C0392B"),
-        (kd, "Bias Model", f"{bias:+.1f}pp", "+ = aktual lebih tinggi (under-forecast)  ·  − = over-forecast",
-         "#1d4ed8" if abs(bias) < 3 else "#A05C00"),
-    ]:
-        with col:
-            st.markdown(f"""<div class='exec-metric'>
-              <div class='exec-metric-label'>{label}</div>
-              <div class='exec-metric-value' style='color:{color};font-size:26px'>{val}</div>
-              <div class='exec-metric-delta'>{note}</div>
-            </div>""", unsafe_allow_html=True)
-
-    st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
-
-    bar_colors = ["#1A7C44" if e >= 0 else "#C0392B" for e in eval_df["error"]]
-    fig_err = go.Figure()
-    fig_err.add_trace(go.Bar(
-        x=eval_df["month"], y=eval_df["error"],
-        marker_color=bar_colors, marker_line_width=0,
-        customdata=eval_df[["actual","predicted","ape"]].values,
-        hovertemplate=(
-            "<b>%{x}</b><br>Aktual: %{customdata[0]:.1f}%<br>"
-            "Prediksi: %{customdata[1]:.1f}%<br>"
-            "Error: %{y:+.1f}pp<br>APE: %{customdata[2]:.1f}%<extra></extra>"
-        ),
-    ))
-    fig_err.add_hline(y=0, line_color="#334155", line_width=1.5)
-    for _, row in eval_df.iterrows():
-        offset = 2.5 if row["error"] >= 0 else -4.5
-        fig_err.add_annotation(
-            x=row["month"], y=row["error"] + offset,
-            text=f"{row['ape']:.1f}%", showarrow=False,
-            font=dict(size=9, color="#334155", family="DM Mono"),
+        st.markdown("<hr class='rule'>", unsafe_allow_html=True)
+        st.markdown("<div class='section-label'>📐 Evaluasi Akurasi — Prediksi vs Aktual 2026</div>", unsafe_allow_html=True)
+        st.markdown(
+            f"<p style='font-size:12px;color:#888;margin-bottom:16px'>"
+            f"Dihitung dari <b>{len(eval_df)} bulan</b> yang sudah tersedia data aktualnya.</p>",
+            unsafe_allow_html=True,
         )
-    fig_err.update_layout(
-        **LAYOUT, height=300, margin=dict(l=0, r=0, t=60, b=40),
-        title=dict(
-            text=("Error per Bulan (Aktual − Prediksi)"
-                  "  <span style='font-size:11px;color:#94a3b8;font-weight:400'>"
-                  "· angka = APE%  ·  hijau = aktual lebih tinggi  ·  merah = aktual lebih rendah</span>"),
-            font=dict(size=14, color="#111", family="DM Serif Display"), x=0,
-        ),
-        xaxis=dict(showgrid=False, tickangle=-35, tickfont_size=11, linecolor="#E8E8E5",
-                   type="category", categoryorder="array", categoryarray=list(eval_df["month"])),
-        yaxis=dict(showgrid=True, gridcolor="#F0F0EE", ticksuffix="pp", tickfont_size=11, zeroline=False),
-        showlegend=False,
-    )
-    st.plotly_chart(fig_err, width='stretch')
 
-    with st.expander("📋 Lihat detail tabel evaluasi per bulan", expanded=False):
-        eval_display = eval_df[["month","predicted","actual","error","ape"]].copy()
-        eval_display.columns = ["Bulan","Prediksi (%)","Aktual (%)","Error (pp)","APE (%)"]
+        ka, kb, kc, kd = st.columns(4)
+        for col, label, val, note, color in [
+            (ka, "MAPE Aktual", f"{mape_live:.1f}%", "< 10% Sangat Baik · < 20% Baik",
+             "#1A7C44" if mape_live < 10 else "#A05C00" if mape_live < 20 else "#C0392B"),
+            (kb, "MAE",  f"{mae_live:.1f}pp",  "Mean Absolute Error (poin persen)",
+             "#1A7C44" if mae_live < 5 else "#A05C00" if mae_live < 15 else "#C0392B"),
+            (kc, "RMSE", f"{rmse_live:.1f}pp", "Root Mean Squared Error",
+             "#1A7C44" if rmse_live < 5 else "#A05C00" if rmse_live < 15 else "#C0392B"),
+            (kd, "Bias Model", f"{bias:+.1f}pp", "+ = aktual lebih tinggi (under-forecast)  ·  − = over-forecast",
+             "#1d4ed8" if abs(bias) < 3 else "#A05C00"),
+        ]:
+            with col:
+                st.markdown(f"""<div class='exec-metric'>
+                  <div class='exec-metric-label'>{label}</div>
+                  <div class='exec-metric-value' style='color:{color};font-size:26px'>{val}</div>
+                  <div class='exec-metric-delta'>{note}</div>
+                </div>""", unsafe_allow_html=True)
 
-        def style_error(v):
-            if not isinstance(v, (int, float)): return ""
-            if v > 0:  return "color: #1A7C44; font-weight: 600"
-            if v < 0:  return "color: #C0392B; font-weight: 600"
-            return ""
+        st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
-        st.dataframe(
-            eval_display.style
-                .format({"Prediksi (%)":"{:.1f}","Aktual (%)":"{:.1f}","Error (pp)":"{:+.1f}","APE (%)":"{:.1f}%"})
-                .applymap(style_error, subset=["Error (pp)"]),
-            width='stretch', hide_index=True,
+        bar_colors = ["#1A7C44" if e >= 0 else "#C0392B" for e in eval_df["error"]]
+        fig_err = go.Figure()
+        fig_err.add_trace(go.Bar(
+            x=eval_df["month"], y=eval_df["error"],
+            marker_color=bar_colors, marker_line_width=0,
+            customdata=eval_df[["actual","predicted","ape"]].values,
+            hovertemplate=(
+                "<b>%{x}</b><br>Aktual: %{customdata[0]:.1f}%<br>"
+                "Prediksi: %{customdata[1]:.1f}%<br>"
+                "Error: %{y:+.1f}pp<br>APE: %{customdata[2]:.1f}%<extra></extra>"
+            ),
+        ))
+        fig_err.add_hline(y=0, line_color="#334155", line_width=1.5)
+        for _, row in eval_df.iterrows():
+            offset = 2.5 if row["error"] >= 0 else -4.5
+            fig_err.add_annotation(
+                x=row["month"], y=row["error"] + offset,
+                text=f"{row['ape']:.1f}%", showarrow=False,
+                font=dict(size=9, color="#334155", family="DM Mono"),
+            )
+        fig_err.update_layout(
+            **LAYOUT, height=300, margin=dict(l=0, r=0, t=60, b=40),
+            title=dict(
+                text=("Error per Bulan (Aktual − Prediksi)"
+                      "  <span style='font-size:11px;color:#94a3b8;font-weight:400'>"
+                      "· angka = APE%  ·  hijau = aktual lebih tinggi  ·  merah = aktual lebih rendah</span>"),
+                font=dict(size=14, color="#111", family="DM Serif Display"), x=0,
+            ),
+            xaxis=dict(showgrid=False, tickangle=-35, tickfont_size=11, linecolor="#E8E8E5",
+                       type="category", categoryorder="array", categoryarray=list(eval_df["month"])),
+            yaxis=dict(showgrid=True, gridcolor="#F0F0EE", ticksuffix="pp", tickfont_size=11, zeroline=False),
+            showlegend=False,
         )
+        st.plotly_chart(fig_err, width='stretch')
+
+        with st.expander("📋 Lihat detail tabel evaluasi per bulan", expanded=False):
+            eval_display = eval_df[["month","predicted","actual","error","ape"]].copy()
+            eval_display.columns = ["Bulan","Prediksi (%)","Aktual (%)","Error (pp)","APE (%)"]
+
+            def style_error(v):
+                if not isinstance(v, (int, float)): return ""
+                if v > 0:  return "color: #1A7C44; font-weight: 600"
+                if v < 0:  return "color: #C0392B; font-weight: 600"
+                return ""
+
+            st.dataframe(
+                eval_display.style
+                    .format({"Prediksi (%)":"{:.1f}","Aktual (%)":"{:.1f}","Error (pp)":"{:+.1f}","APE (%)":"{:.1f}%"})
+                    .applymap(style_error, subset=["Error (pp)"]),
+                width='stretch', hide_index=True,
+            )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 6 — EVALUASI AKURASI SUMMARY SEMUA VILA
@@ -848,11 +906,13 @@ if trained_villas:
             </tr>"""
         else:
             if ")(" in order:
-                parts       = order.split(")(")
-                arima_part  = parts[0] + ")"
-                seas_part   = "(" + parts[1]
-                order_html  = (f"<span style='font-size:13px;font-weight:700;font-family:DM Mono,monospace;color:#7C3AED'>{arima_part}</span>"
-                               f"<span style='font-size:12px;font-weight:600;font-family:DM Mono,monospace;color:#A855F7'>{seas_part}</span>")
+                parts      = order.split(")(")
+                arima_part = parts[0] + ")"
+                seas_part  = "(" + parts[1]
+                order_html = (
+                    f"<span style='font-size:13px;font-weight:700;font-family:DM Mono,monospace;color:#7C3AED'>{arima_part}</span>"
+                    f"<span style='font-size:12px;font-weight:600;font-family:DM Mono,monospace;color:#A855F7'>{seas_part}</span>"
+                )
             else:
                 order_html = f"<span style='font-size:13px;font-weight:700;font-family:DM Mono,monospace;color:#7C3AED'>{order}</span>"
 
@@ -917,8 +977,7 @@ def build_monthly_data_filtered(villa_name: str, year_filter=None):
     monthly_adr["adr_m"] = monthly_adr["adr_m"] / 1_000_000
     monthly = pd.merge(monthly_occ, monthly_adr, on="period", how="left").sort_values("period").reset_index(drop=True)
 
-    # Build daily merged for scatter
-    occ_daily = occ_raw[["date","occupancy_pct"]].copy()
+    occ_daily    = occ_raw[["date","occupancy_pct"]].copy()
     daily_merged = pd.merge(occ_daily, fin_filled[["date","avg_daily_revenue"]], on="date", how="inner").dropna()
 
     try:
@@ -952,9 +1011,8 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# ── Filters for descriptive section ──────────────────────────────────────────
-all_areas   = sorted(set(VILLA_INSIGHTS.get(v,{}).get("area","") for v in villa_names if VILLA_INSIGHTS.get(v,{}).get("area","")))
-all_years   = sorted(df_occ["year"].unique().tolist())
+all_areas = sorted(set(VILLA_INSIGHTS.get(v,{}).get("area","") for v in villa_names if VILLA_INSIGHTS.get(v,{}).get("area","")))
+all_years = sorted(df_occ["year"].unique().tolist())
 
 fa, fb, fc_col = st.columns([1.5, 2.5, 2])
 with fa:
@@ -1000,7 +1058,7 @@ else:
 
     for tab_idx, (tab, vn) in enumerate(zip(tab_villas_d, display_villas)):
         with tab:
-            vc4              = get_color(vn)
+            vc4                 = get_color(vn)
             r_hex, g_hex, b_hex = safe_hex(vc4)
             monthly, cd2, daily_merged = build_monthly_data_filtered(vn, year_filter=year_filter)
 
@@ -1012,7 +1070,6 @@ else:
             if not has_adr:
                 monthly["adr_m"] = np.nan
 
-            # ── Dual-axis trend chart ─────────────────────────────────────────
             fig_dual = make_subplots(specs=[[{"secondary_y": True}]])
             fig_dual.add_trace(go.Bar(
                 x=monthly["period"], y=monthly["occ"], name="Okupansi (%)",
@@ -1062,7 +1119,6 @@ else:
                                    showgrid=False, ticksuffix="%", range=[0,130], tickfont_size=11)
             st.plotly_chart(fig_dual, width='stretch')
 
-            # ── Korelasi scatter: ADR vs Okupansi ────────────────────────────
             if not daily_merged.empty and len(daily_merged) >= 5:
                 st.markdown(f"""
                 <div style='font-family:DM Mono,monospace;font-size:10px;letter-spacing:.14em;
@@ -1074,7 +1130,6 @@ else:
                 scatter_x = daily_merged["occupancy_pct"].values
                 scatter_y = daily_merged["avg_daily_revenue"].values / 1_000_000
 
-                # Regression line
                 try:
                     m_coef, b_coef = np.polyfit(scatter_x, scatter_y, 1)
                     x_line = np.linspace(scatter_x.min(), scatter_x.max(), 100)
@@ -1083,10 +1138,8 @@ else:
                 except Exception:
                     has_reg = False
 
-                r_val_sc = cd2.get("r", 0)
-                r2_val   = round(r_val_sc ** 2, 3)
-
-                # Color points by ADR level
+                r_val_sc   = cd2.get("r", 0)
+                r2_val     = round(r_val_sc ** 2, 3)
                 adr_med_sc = np.median(scatter_y)
                 point_colors = [f"rgba({r_hex},{g_hex},{b_hex},0.65)" if y >= adr_med_sc
                                 else f"rgba({r_hex},{g_hex},{b_hex},0.30)" for y in scatter_y]
@@ -1109,7 +1162,6 @@ else:
                         hoverinfo="skip",
                     ))
 
-                # Add r annotation
                 fig_scatter.add_annotation(
                     xref="paper", yref="paper", x=0.97, y=0.97,
                     text=f"<b>r = {r_val_sc:+.2f}</b>  |  R² = {r2_val:.3f}  |  n = {len(scatter_x)}",
@@ -1132,35 +1184,17 @@ else:
                 )
                 st.plotly_chart(fig_scatter, width='stretch')
 
-                # Correlation interpretation card
                 abs_r = abs(r_val_sc)
                 if abs_r >= 0.7:
-                    corr_strength = "Kuat"
-                    corr_color    = "#1A7C44"
-                    corr_bg       = "#EDFAF2"
-                    corr_border   = "#B2EAC8"
-                    corr_icon     = "🔗"
+                    corr_strength = "Kuat";              corr_color = "#1A7C44"; corr_bg = "#EDFAF2"; corr_border = "#B2EAC8"; corr_icon = "🔗"
                 elif abs_r >= 0.4:
-                    corr_strength = "Moderat"
-                    corr_color    = "#2563EB"
-                    corr_bg       = "#EEF3FF"
-                    corr_border   = "#C5D7FF"
-                    corr_icon     = "〰️"
+                    corr_strength = "Moderat";           corr_color = "#2563EB"; corr_bg = "#EEF3FF"; corr_border = "#C5D7FF"; corr_icon = "〰️"
                 elif abs_r >= 0.2:
-                    corr_strength = "Lemah"
-                    corr_color    = "#A05C00"
-                    corr_bg       = "#FFF8EC"
-                    corr_border   = "#FFD88A"
-                    corr_icon     = "📉"
+                    corr_strength = "Lemah";             corr_color = "#A05C00"; corr_bg = "#FFF8EC"; corr_border = "#FFD88A"; corr_icon = "📉"
                 else:
-                    corr_strength = "Sangat Lemah / Tidak Ada"
-                    corr_color    = "#64748b"
-                    corr_bg       = "#f1f5f9"
-                    corr_border   = "#e2e8f0"
-                    corr_icon     = "➖"
+                    corr_strength = "Sangat Lemah / Tidak Ada"; corr_color = "#64748b"; corr_bg = "#f1f5f9"; corr_border = "#e2e8f0"; corr_icon = "➖"
 
-                direction = "positif — harga naik seiring ocupansi naik" if r_val_sc >= 0 else "negatif — harga turun saat ocupansi naik"
-
+                direction    = "positif — harga naik seiring ocupansi naik" if r_val_sc >= 0 else "negatif — harga turun saat ocupansi naik"
                 adr_med_disp = cd2.get("adr_median", ADR_STATIC.get(vn,{}).get("median_adr", 0))
                 adr_hi_disp  = cd2.get("adr_max",    ADR_STATIC.get(vn,{}).get("adr_max", 0))
                 adr_lo_disp  = cd2.get("adr_min",    ADR_STATIC.get(vn,{}).get("adr_min", 0))
