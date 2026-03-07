@@ -664,12 +664,12 @@ try:
                     using_real = True
                 else:
                     err_msg = raw_fc["error"].iloc[0] if raw_fc is not None and "error" in raw_fc.columns else "unknown"
-                    st.warning(f"Forecast SARIMA gagal: {err_msg}. Menggunakan Seasonal Naive.")
+                    print(f"Forecast SARIMA gagal: {err_msg}. Menggunakan Seasonal Naive.")
             except Exception as ex:
-                st.warning(f"Forecast error: {ex}. Menggunakan Seasonal Naive.")
+                print(f"Forecast error: {ex}. Menggunakan Seasonal Naive.")
 
 except Exception as e:
-    st.warning(f"Error generate forecast SARIMA: {e}. Fallback ke Seasonal Naive.")
+    print(f"Error generate forecast SARIMA: {e}. Fallback ke Seasonal Naive.")
 
 # Seasonal Naive fallback
 if fc_df.empty:
