@@ -823,7 +823,6 @@ try:
                 font=dict(size=11, family="DM Mono"),
                 bgcolor="rgba(0,0,0,0)",
                 borderwidth=0,
-                itemgap=20,
             ),
             xaxis=dict(
                 showgrid=False,
