@@ -650,7 +650,7 @@ try:
                     using_real          = True
                     forecast_from_cache = True
             except Exception as ex:
-                st.warning(f"Gagal load forecast dari DB: {ex}")
+                print(f"[SARIMA] Gagal load forecast dari DB: {ex}")
 
         # Step 2: compute fresh if cache missed
         if fc_df.empty and callable(sarima_forecast or None):
@@ -664,12 +664,12 @@ try:
                     using_real = True
                 else:
                     err_msg = raw_fc["error"].iloc[0] if raw_fc is not None and "error" in raw_fc.columns else "unknown"
-                    print(f"Forecast SARIMA gagal: {err_msg}. Menggunakan Seasonal Naive.")
+                    print(f"[SARIMA] Forecast gagal: {err_msg}. Fallback ke Seasonal Naive.")
             except Exception as ex:
-                print(f"Forecast error: {ex}. Menggunakan Seasonal Naive.")
+                print(f"[SARIMA] Forecast error: {ex}. Fallback ke Seasonal Naive.")
 
 except Exception as e:
-    print(f"Error generate forecast SARIMA: {e}. Fallback ke Seasonal Naive.")
+    print(f"[SARIMA] Error generate forecast: {e}. Fallback ke Seasonal Naive.")
 
 # Seasonal Naive fallback
 if fc_df.empty:
@@ -713,7 +713,7 @@ if not actual_2026_raw.empty:
             lambda m: pd.Timestamp(f"2026-{m:02d}-01").strftime("%b %Y")
         )
     except Exception as e:
-        st.warning(f"Gagal proses data aktual 2026: {e}")
+        print(f"[SARIMA] Gagal proses data aktual 2026: {e}")
 
 has_actual  = not actual_monthly.empty
 model_label = "SARIMA" if using_real else "Seasonal Naive"
@@ -747,55 +747,112 @@ try:
         r_, g_, b_ = safe_hex(vc)
         fig_occ = go.Figure()
 
+        # ── CI band: area between upper & lower ──────────────────────────────
         if show_ci:
             fig_occ.add_trace(go.Scatter(
                 x=list(fc_df["month"]) + list(fc_df["month"][::-1]),
                 y=list(fc_df["upper"]) + list(fc_df["lower"][::-1]),
                 fill="toself",
-                fillcolor=f"rgba({r_},{g_},{b_},0.10)",
+                fillcolor=f"rgba({r_},{g_},{b_},0.08)",
                 line=dict(color="rgba(0,0,0,0)"),
                 name="CI 95%",
                 hoverinfo="skip",
                 showlegend=True,
             ))
 
+        # ── Predicted line ────────────────────────────────────────────────────
         fig_occ.add_trace(go.Scatter(
-            x=fc_df["month"], y=fc_df["predicted"],
+            x=fc_df["month"],
+            y=fc_df["predicted"],
             mode="lines+markers",
             name=f"Prediksi {model_label}",
-            line=dict(color=vc, width=3),
-            marker=dict(size=10, symbol="diamond", color=vc, line=dict(color="#F7F7F5", width=2)),
-            hovertemplate="<b>%{x}</b><br>Prediksi: %{y:.1f}%<extra></extra>",
+            line=dict(color=vc, width=2.5),
+            marker=dict(
+                size=9,
+                symbol="diamond",
+                color=vc,
+                line=dict(color="#ffffff", width=2),
+            ),
+            hovertemplate=(
+                "<b>%{x}</b><br>"
+                f"Prediksi ({model_label}): <b>%{{y:.1f}}%</b><extra></extra>"
+            ),
         ))
 
+        # ── Actual line ───────────────────────────────────────────────────────
         if has_actual:
             fig_occ.add_trace(go.Scatter(
-                x=actual_monthly["month"], y=actual_monthly["actual"],
+                x=actual_monthly["month"],
+                y=actual_monthly["actual"],
                 mode="lines+markers",
                 name="Aktual 2026",
-                line=dict(color="#f97316", width=2.8, dash="dot"),
-                marker=dict(size=10, symbol="circle", color="#f97316", line=dict(color="#fff", width=2)),
-                hovertemplate="<b>%{x}</b><br>Aktual: %{y:.1f}%<extra></extra>",
+                line=dict(color="#f97316", width=2.5, dash="dot"),
+                marker=dict(
+                    size=9,
+                    symbol="circle",
+                    color="#f97316",
+                    line=dict(color="#ffffff", width=2),
+                ),
+                hovertemplate=(
+                    "<b>%{x}</b><br>"
+                    "Aktual: <b>%{y:.1f}%</b><extra></extra>"
+                ),
             ))
 
         title_txt = "Prediksi vs Aktual" if has_actual else "Prediksi"
         fig_occ.update_layout(
-            **LAYOUT,
-            height=380,
-            margin=dict(l=0, r=0, t=60, b=40),
+            plot_bgcolor="#ffffff",
+            paper_bgcolor="#f8fafc",
+            font_color="#334155",
+            font_family="DM Sans",
+            height=400,
+            margin=dict(l=10, r=10, t=80, b=10),
             title=dict(
-                text=f"{title_txt} Okupansi {sel_villa} — 2026",
-                font=dict(size=16, color="#111", family="DM Serif Display"),
-                x=0, xanchor="left",
+                text=f"{title_txt} Okupansi — <b>{sel_villa}</b> · 2026",
+                font=dict(size=15, color="#0f172a", family="Sora"),
+                x=0,
+                xanchor="left",
+                pad=dict(b=20),
             ),
-            legend=dict(orientation="h", y=1.15, x=0, xanchor="left", font_size=12, bgcolor="rgba(0,0,0,0)"),
+            # ── Legend di bawah title, tidak tumpang tindih ──────────────────
+            legend=dict(
+                orientation="h",
+                y=1.08,
+                x=0,
+                xanchor="left",
+                font=dict(size=11, family="DM Mono"),
+                bgcolor="rgba(0,0,0,0)",
+                borderwidth=0,
+                itemgap=20,
+            ),
             xaxis=dict(
-                showgrid=False, tickangle=-35, tickfont_size=11, linecolor="#E8E8E5",
-                type="category", categoryorder="array", categoryarray=list(fc_df["month"]),
+                showgrid=False,
+                tickangle=0,
+                tickfont=dict(size=12, family="DM Mono", color="#64748b"),
+                linecolor="#e2e8f0",
+                linewidth=1,
+                type="category",
+                categoryorder="array",
+                categoryarray=list(fc_df["month"]),
             ),
-            yaxis=dict(showgrid=True, gridcolor="#F0F0EE", ticksuffix="%", range=[0, 110], tickfont_size=11),
+            yaxis=dict(
+                showgrid=True,
+                gridcolor="#f1f5f9",
+                gridwidth=1,
+                ticksuffix="%",
+                range=[0, 110],
+                tickfont=dict(size=11, family="DM Mono", color="#94a3b8"),
+                zeroline=False,
+            ),
+            hovermode="x unified",
+            hoverlabel=dict(
+                bgcolor="#0f172a",
+                bordercolor="#334155",
+                font=dict(size=12, family="DM Mono", color="#f1f5f9"),
+            ),
         )
-        st.plotly_chart(fig_occ, use_container_width=True)
+
+        st.plotly_chart(fig_occ, use_container_width=True, config={"displayModeBar": False})
     else:
         st.info("Tidak ada data forecast untuk ditampilkan.")
 
